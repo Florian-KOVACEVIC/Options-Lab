@@ -1,4 +1,4 @@
-# Options Lab — Black-Scholes Pricer
+# Options Lab — Black-Scholes Pricer 
 
 **[Live Demo](https://options-lab-florian-kovacevic.streamlit.app/)**
 
