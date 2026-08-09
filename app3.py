@@ -3,7 +3,6 @@ Options Lab — Black-Scholes Pricer
 ----------------------------------
 Auteur     : FloKov 
 Usage      : streamlit run app3.py
-Graphiques : SVG pur généré dynamiquement (zéro matplotlib, zéro plotly)
 Compatible Windows/Mac/Linux sans installation supplémentaire
 """
 import streamlit as st
@@ -21,6 +20,7 @@ st.set_page_config(page_title="Options Lab", page_icon="◈",
 #  MATH ENGINE
 # ─────────────────────────────────────────────────────────────
 def bs_price(S, K, T, r, sigma, q=0.0, otype="call"):
+    otype = str(otype).strip().lower()
     if T <= 1e-9 or sigma <= 1e-9:
         if otype == "call": return max(S*np.exp(-q*T) - K*np.exp(-r*T), 0)
         return max(K*np.exp(-r*T) - S*np.exp(-q*T), 0)
@@ -31,6 +31,7 @@ def bs_price(S, K, T, r, sigma, q=0.0, otype="call"):
 
 def bs_price_vec(S_arr, K, T, r, sigma, q=0.0, otype="call"):
     """Vectorized BS price for arrays."""
+    otype = str(otype).strip().lower()
     S_arr = np.asarray(S_arr, dtype=float)
     if T <= 1e-9 or sigma <= 1e-9:
         if otype == "call": return np.maximum(S_arr*np.exp(-q*T) - K*np.exp(-r*T), 0)
@@ -41,6 +42,7 @@ def bs_price_vec(S_arr, K, T, r, sigma, q=0.0, otype="call"):
     return K*np.exp(-r*T)*norm.cdf(-d2) - S_arr*np.exp(-q*T)*norm.cdf(-d1)
 
 def bs_greeks(S, K, T, r, sigma, q=0.0, otype="call"):
+    otype = str(otype).strip().lower()
     if T <= 1e-9 or sigma <= 1e-9:
         return dict(delta=0,gamma=0,theta=0,vega=0,rho=0,vanna=0)
     d1 = (np.log(S/K)+(r-q+0.5*sigma**2)*T)/(sigma*np.sqrt(T)); d2=d1-sigma*np.sqrt(T)
@@ -57,6 +59,7 @@ def bs_greeks(S, K, T, r, sigma, q=0.0, otype="call"):
     )
 
 def implied_vol(mkt, S, K, T, r, q=0.0, otype="call"):
+    otype = str(otype).strip().lower()
     if mkt <= 0 or S <= 0 or K <= 0 or T <= 1e-9:
         return np.nan
     try:
@@ -278,11 +281,38 @@ def svg_chart(
     svg.append('</svg>')
     return "\n".join(svg)
 
-def show_svg(svg_str, height=None, full_width=False):
+_HAS_DIALOG = hasattr(st, "dialog")
+
+if _HAS_DIALOG:
+    @st.dialog("Vue plein écran", width="large")
+    def _fullscreen_chart_dialog():
+        svg_data = st.session_state.get("_fs_svg", "")
+        title = st.session_state.get("_fs_title", "")
+        if title:
+            st.markdown(f'<div class="sh" style="padding-top:0">{title}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="width:100%">{svg_data}</div>', unsafe_allow_html=True)
+
+def show_svg(svg_str, height=None, full_width=False, title="", chart_id=None):
+    """Affiche un graphique SVG. Si chart_id est fourni, une icône plein écran discrète
+    est ancrée en overlay dans le coin bas-droit du graphique (icône Material centrée)."""
     fw = "width:100%;" if full_width else ""
-    st.markdown(f'<div style="border-radius:10px;overflow:hidden;margin:4px 0;{fw}">'
-                f'<div style="{fw}{"" if not full_width else "max-width:100%;overflow-x:auto;"}">{svg_str}</div></div>',
-                unsafe_allow_html=True)
+    inner = (f'<div style="border-radius:10px;overflow:hidden;margin:4px 0;{fw}">'
+             f'<div style="{fw}{"" if not full_width else "max-width:100%;overflow-x:auto;"}">{svg_str}</div></div>')
+    if not chart_id:
+        st.markdown(inner, unsafe_allow_html=True)
+        return
+    with st.container(key=f"chartbox_{chart_id}"):
+        st.markdown(inner, unsafe_allow_html=True)
+        if _HAS_DIALOG:
+            if st.button("", key=f"fs_{chart_id}", icon=":material/fullscreen:", help="Ouvrir en plein écran"):
+                st.session_state["_fs_svg"] = svg_str
+                st.session_state["_fs_title"] = title
+                _fullscreen_chart_dialog()
+        else:
+            with st.popover("", icon=":material/fullscreen:", help="Ouvrir en plein écran"):
+                if title:
+                    st.markdown(f'<div class="sh" style="padding-top:0">{title}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="width:100%">{svg_str}</div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 #  UI HELPERS
@@ -522,7 +552,7 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
 
     # 4 Prix vs Vol
     svg4 = svg_chart([
-        {"x":list(sigR*100),"y":list(p_sig),"color":"#ef4444","width":2.2,"fill":True,"fill_color":"#ef4444","label":"Prix"},
+        {"x":list(sigR*100),"y":list(p_sig),"color":"#3b82f6","width":2.2,"fill":True,"fill_color":"#3b82f6","label":"Prix"},
     ], W=W, H=H, xlabel="Volatilité implicite (%)", ylabel="Prix (\u20ac)",
        vlines=[vl(sigma*100,"#f59e0b",f"\u03c3={sigma*100:.1f}%")],
        show_dot={"x":sigma*100,"y":cur,"color":"#f59e0b","label":f"\u20ac{cur:.3f}"},
@@ -530,7 +560,7 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
 
     # 5 Time Decay
     svg5 = svg_chart([
-        {"x":list(TR),"y":list(p_T),"color":"#3b82f6","width":2.2,"fill":True,"fill_color":"#3b82f6","label":"Prix"},
+        {"x":list(TR),"y":list(p_T),"color":"#f59e0b","width":2.2,"fill":True,"fill_color":"#f59e0b","label":"Prix"},
     ], W=W, H=H, xlabel="Maturité (en année)", ylabel="Prix (\u20ac)",
        vlines=[vl(T,"#f59e0b",fmt_mat(T))],
        show_dot={"x":T,"y":cur,"color":"#f59e0b","label":f"\u20ac{cur:.3f}"},
@@ -858,6 +888,7 @@ with st.sidebar:
     # ── Type d'option ───────────────────────────────────────
     st.markdown('<div class="sb-title">Type d\'option</div>', unsafe_allow_html=True)
     otype = st.radio("", ["call", "put"], horizontal=True, key="ot1",
+                     format_func=lambda x: x.capitalize(),
                      label_visibility="collapsed")
     _badge_cls = "sb-call" if otype == "call" else "sb-put"
     _badge_lbl = "\u25cf CALL - Droit d'acheter" if otype == "call" else "\u25cf PUT - Droit de vendre"
@@ -888,7 +919,7 @@ with st.sidebar:
 
     mr = S / K if K > 0 else 1
     if S == K:                                                        pc, pt = "matm", "ATM"
-    elif (otype == "call" and S > K) or (otype == "Put" and S < K):  pc, pt = "mitm", "ITM"
+    elif (otype == "call" and S > K) or (otype == "put" and S < K):  pc, pt = "mitm", "ITM"
     else:                                                             pc, pt = "motm", "OTM"
     st.markdown(f'<span class="mpill {pc}">{pt} \u00b7 {mr:.3f}</span>', unsafe_allow_html=True)
 
@@ -1042,8 +1073,8 @@ $$d_1 = \frac{\ln(S/K) + (r - q + \sigma^2/2)\,T}{\sigma\sqrt{T}} \qquad d_2 = d
 
     # Ligne 1
     chart_r1c1, chart_r1c2 = st.columns(2)
-    with chart_r1c1: show_svg(svg1, full_width=True)
-    with chart_r1c2: show_svg(svg2, full_width=True)
+    with chart_r1c1: show_svg(svg1, full_width=True, title="Prix de l'option selon le spot", chart_id="prix")
+    with chart_r1c2: show_svg(svg2, full_width=True, title="Δ Delta - Sensibilité au prix du sous-jacent", chart_id="delta")
 
     with st.expander(" Comment lire ces graphiques"):
         st.markdown('<div class="chart-exp"><b>Prix de l\'option (gauche)</b> - La courbe orange montre comment le prix de option '
@@ -1054,8 +1085,8 @@ $$d_1 = \frac{\ln(S/K) + (r - q + \sigma^2/2)\,T}{\sigma\sqrt{T}} \qquad d_2 = d
 
     # Ligne 2
     chart_r2c1, chart_r2c2 = st.columns(2)
-    with chart_r2c1: show_svg(svg3, full_width=True)
-    with chart_r2c2: show_svg(svg4, full_width=True)
+    with chart_r2c1: show_svg(svg3, full_width=True, title="Γ Gamma - Convexité (accélération du Delta)", chart_id="gamma")
+    with chart_r2c2: show_svg(svg4, full_width=True, title="ν Vega - Sensibilité à la volatilité implicite", chart_id="vega")
 
     with st.expander("Comment lire ces graphiques"):
         st.markdown('<div class="chart-exp"><b>Gamma (gauche)</b> - Pic maximal au strike (ATM). '
@@ -1066,7 +1097,7 @@ $$d_1 = \frac{\ln(S/K) + (r - q + \sigma^2/2)\,T}{\sigma\sqrt{T}} \qquad d_2 = d
 
     # Ligne 3 : centre
     chart_r3_pad1, chart_r3c1, chart_r3_pad2 = st.columns([1,2,1])
-    with chart_r3c1: show_svg(svg5, full_width=True)
+    with chart_r3c1: show_svg(svg5, full_width=True, title="Θ Theta - Érosion temporelle (Time Decay)", chart_id="theta")
 
     with st.expander("Comment lire ce graphique"):
         st.markdown('<div class="chart-exp"><b>Theta - Time Decay</b> - La courbe montre l\'érosion du prix '
@@ -1120,7 +1151,9 @@ with tab2:
                             f'<div style="margin:5px 0 4px">{legs_html(info["legs"])}</div>'
                             f'<div class="sc-s">{info["outlook"]}</div></div>', unsafe_allow_html=True)
                 if st.button("Sélectionner",key=f"s2_{name}"):
-                    st.session_state.sel=name; st.rerun()
+                    st.session_state.sel=name
+                    st.session_state["t_pct_2"] = 100  # reset curseur temporel à chaque changement de stratégie
+                    st.rerun()
 
     st.markdown("---")
     strat=st.session_state.sel; info=STRATEGIES[strat]
@@ -1229,7 +1262,18 @@ with tab3:
 
     # Template selector
     tpl_names = ["- Personnalisé -"] + list(BUILDER_TEMPLATES.keys())
+
+    def _on_tpl_sel_change():
+        """À chaque changement de stratégie (template ou retour à '- Personnalisé -'),
+        le curseur temporel (% de temps passé) est systématiquement remis à 100% (maturité).
+        Les jambes / valeurs du dernier modèle personnalisé construit par l'utilisateur ne sont
+        JAMAIS touchées ici : elles vivent dans leurs propres clés de session_state
+        (la_i, li_i, ls_i, lk_i, lq_i, lr_i, lq_div_i, lsig_i, ly_i, lm_i, ld_i) et restent
+        donc intégralement préservées, quel que soit le template sélectionné ensuite."""
+        st.session_state["t_pct_3"] = 100
+
     tpl_sel = st.selectbox("\u25CF Charger un template", tpl_names, key="tpl_sel",
+                           on_change=_on_tpl_sel_change,
                            help="Sélectionnez une stratégie prédéfinie pour pré-remplir les jambes")
     if tpl_sel != "- Personnalisé -":
         tpl = BUILDER_TEMPLATES[tpl_sel]
@@ -1511,12 +1555,12 @@ with tab4:
         "Contrat donnant le <b>droit d'acheter</b> un actif à un prix fixé (strike) avant une date donné. "
         "L'acheteur paie une prime pour ce droit. Gain potentiel <b>illimité</b> si l'actif monte, "
         "perte limité à la prime payé. Valeur intrinsèque = max(S \u2212 K, 0).",
-        "#22c55e", "34,197,94")
+        "#06b6d4", "6,182,212")
     cards += gls_card("P", "Option Put", "Droit de vente",
         "Contrat donnant le <b>droit de vendre</b> un actif au strike. "
         "Sert de protection (assurance) contre une baisse ou d'outil de spéculation baissière. "
         "Gain max = K \u2212 prime. Valeur intrinsèque = max(K \u2212 S, 0).",
-        "#a78bfa", "167,139,250")
+        "#f472b6", "244,114,182")
     cards += gls_card("K", "Strike", "Prix d'exercice",
         "Prix d'exercice fixé dans le contrat d'option. C'est le <b>seuil</b> à partir duquel l'option "
         "a une valeur intrinsèque. Détermine si l'option est ITM, ATM ou OTM. "
@@ -1528,7 +1572,7 @@ with tab4:
         "<b>ATM</b> (At The Money) : spot \u2248 strike. "
         "<b>OTM</b> (Out of The Money) : pas de valeur intrinsèque. "
         "La moneyness détermine la composition du prix entre valeur intrinsèque et valeur temps.",
-        "#06b6d4", "6,182,212")
+        "#64748b", "100,116,139")
     cards += gls_card("\u03c3", "Volatilité Implicite", "Anticipation du marché",
         "Volatilité future <b>anticipé par le marché</b>, extraite du prix observé des options via "
         "inversion du modèle BS (méthode de Brent). Indicateur clé : une IV élevé signifie que "
@@ -1603,7 +1647,7 @@ with tab4:
         "Acheter des options (long gamma) donne un avantage sur les grands mouvements mais co\u00fbte du temps. "
         "Vendre des options (short gamma) encaisse le temps mais expose aux mouvements brusques. "
         "C'est le compromis fondamental de toute stratégie d'options.",
-        "#06b6d4", "6,182,212")
+        "#eab308", "234,179,8")
     st.markdown(f'<div class="gls-grid">{cards3}</div>', unsafe_allow_html=True)
 
 st.markdown("""
@@ -1633,6 +1677,10 @@ st.markdown("""
   --o:#f59e0b;--r:#ef4444;--p:#a78bfa;
   --t:#fafafa;--t2:#d4d4d8;--t3:#a1a1aa;--t4:#27272a;
   --rad:10px;
+  /* Charte grecques & Call/Put — Design System unifié */
+  --delta:#22c55e;--gamma:#a78bfa;--theta:#f59e0b;
+  --vega:#3b82f6;--rho:#ef4444;--vanna:#71717a;
+  --call:#06b6d4;--put:#f472b6;
 }
 *,*::before,*::after{box-sizing:border-box;}
 html,body,[class*="css"],.stApp{font-family:'Inter',sans-serif!important;background:var(--bg)!important;color:var(--t);}
@@ -1678,8 +1726,8 @@ header[data-testid="stHeader"]{background:var(--bg)!important;}
 .ph-sub{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--t2);margin-top:10px;
   display:flex;gap:10px;flex-wrap:wrap;padding-top:8px;border-top:1px solid rgba(255,255,255,.04);}
 .ph-badge{font-size:.72rem;font-weight:600;padding:4px 14px;border-radius:20px;align-self:flex-start;letter-spacing:.5px;}
-.ph-c{background:rgba(34,197,94,.08);color:var(--g);border:1px solid rgba(34,197,94,.15);}
-.ph-p{background:rgba(167,139,250,.08);color:var(--p);border:1px solid rgba(167,139,250,.15);}
+.ph-c{background:rgba(6,182,212,.08);color:var(--call);border:1px solid rgba(6,182,212,.15);}
+.ph-p{background:rgba(244,114,182,.08);color:var(--put);border:1px solid rgba(244,114,182,.15);}
 /* Greek card */
 .gc{background:var(--s2);border:1px solid var(--b1);border-radius:10px;padding:14px 12px;
   position:relative;overflow:hidden;transition:border-color .2s;height:100%;
@@ -1731,8 +1779,8 @@ header[data-testid="stHeader"]{background:var(--bg)!important;}
 .tag{display:inline-block;font-size:.68rem;font-weight:600;padding:2px 6px;border-radius:4px;margin:1px 2px;}
 .tby{background:rgba(34,197,94,.12);color:#22c55e;}
 .tse{background:rgba(239,68,68,.12);color:#ef4444;}
-.tca{background:rgba(59,130,246,.12);color:#3b82f6;}
-.tpu{background:rgba(167,139,250,.12);color:#a78bfa;}
+.tca{background:rgba(6,182,212,.12);color:var(--call);}
+.tpu{background:rgba(244,114,182,.12);color:var(--put);}
 /* Total bar */
 .tbar{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:14px 0;}
 .tbi{background:var(--s1);border:1px solid var(--b1);border-radius:8px;padding:12px 14px;text-align:center;}
@@ -1805,8 +1853,8 @@ section[data-testid="stSidebar"] hr{border-color:var(--b1);margin:10px 0;}
   padding:10px 0 6px;border-bottom:1px solid var(--b1);margin-bottom:8px;}
 .sb-badge{display:inline-flex;align-items:center;gap:6px;font-size:.73rem;font-weight:600;
   padding:4px 10px;border-radius:6px;margin-bottom:10px;}
-.sb-call{background:rgba(34,197,94,.1);color:#22c55e;border:1px solid rgba(34,197,94,.2);}
-.sb-put{background:rgba(167,139,250,.1);color:#a78bfa;border:1px solid rgba(167,139,250,.2);}
+.sb-call{background:rgba(6,182,212,.1);color:var(--call);border:1px solid rgba(6,182,212,.2);}
+.sb-put{background:rgba(244,114,182,.1);color:var(--put);border:1px solid rgba(244,114,182,.2);}
 /* Scenario grid */
 .sc-grid{width:100%;border-collapse:separate;border-spacing:0;font-family:'DM Mono',monospace;font-size:.73rem;}
 .sc-grid th{background:var(--s2);color:var(--t3);font-size:.68rem;font-weight:700;text-transform:uppercase;
@@ -1873,5 +1921,28 @@ section[data-testid="stSidebar"] hr{border-color:var(--b1);margin:10px 0;}
 .gls-divider{margin:28px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--b1);
   font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;
   background:linear-gradient(90deg,#60a5fa,#a78bfa,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+/* Bouton "plein écran" overlay ancré en bas-droite des graphiques SVG (section Visualisations) */
+div[class*="st-key-chartbox_"]{position:relative;}
+div[class*="st-key-chartbox_"] div[data-testid="stButton"]{
+  position:absolute;bottom:10px;right:10px;z-index:6;width:auto;margin:0;}
+div[class*="st-key-chartbox_"] div[data-testid="stButton"] button{
+  width:32px;height:32px;min-width:32px;padding:0;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(24,24,27,.72);border:1px solid rgba(255,255,255,.12);
+  backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,.25);
+  transition:background .15s,border-color .15s,transform .15s;}
+div[class*="st-key-chartbox_"] div[data-testid="stButton"] button:hover{
+  background:rgba(39,39,42,.92);border-color:rgba(255,255,255,.28);transform:scale(1.06);}
+div[class*="st-key-chartbox_"] div[data-testid="stButton"] button p,
+div[class*="st-key-chartbox_"] div[data-testid="stButton"] button span{
+  margin:0;display:flex;align-items:center;justify-content:center;line-height:1;}
+div[class*="st-key-chartbox_"] div[data-testid="stButton"] button svg{
+  width:17px;height:17px;margin:0 !important;color:var(--t2);}
+div[class*="st-key-chartbox_"] div[data-testid="stPopover"]{
+  position:absolute;bottom:10px;right:10px;z-index:6;width:auto;}
+div[class*="st-key-chartbox_"] div[data-testid="stPopover"] button{
+  width:32px;height:32px;min-width:32px;padding:0;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(24,24,27,.72);border:1px solid rgba(255,255,255,.12);}
 </style>
 """, unsafe_allow_html=True)
