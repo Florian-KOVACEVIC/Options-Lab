@@ -1,7 +1,7 @@
 """
-Options Lab — Black-Scholes Pricer
+Options Lab - Black-Scholes Pricer
 ----------------------------------
-Auteur     : FloKov 
+Auteur     : FloKov
 Usage      : streamlit run app3.py
 Compatible Windows/Mac/Linux sans installation supplémentaire
 """
