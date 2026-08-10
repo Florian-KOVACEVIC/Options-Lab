@@ -1,8 +1,8 @@
-# Options Lab — Black-Scholes Pricer 
+# Options Lab - Black & Scholes Pricer 
 
 **[Live Demo](https://options-lab-florian-kovacevic.streamlit.app/)**
 
-Interactive options pricing tool built on the Black-Scholes model, with full Greeks visualization and multi-leg strategy builder.
+Interactive options pricing tool built on the Black-Scholes model, with full Greeks visualization, multi-leg strategy builder and structured products.
 
 Built as a personal project to implement derivatives pricing theory from scratch.
 
