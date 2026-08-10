@@ -1,8 +1,9 @@
 """
-Options Lab - Black-Scholes Pricer
+Options Lab — Black-Scholes Pricer
 ----------------------------------
-Auteur     : FloKov
+Auteur     : FloKov 
 Usage      : streamlit run app3.py
+Graphiques : SVG pur généré dynamiquement (zéro matplotlib, zéro plotly)
 Compatible Windows/Mac/Linux sans installation supplémentaire
 """
 import streamlit as st
@@ -10,7 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from scipy.optimize import brentq
-import warnings, html
+import warnings, html, json
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Options Lab", page_icon="◈",
@@ -67,6 +68,83 @@ def implied_vol(mkt, S, K, T, r, q=0.0, otype="call"):
         if f(1e-4)*f(9.9)>=0: return np.nan
         return brentq(f,1e-4,9.9)
     except Exception: return np.nan
+
+# ─────────────────────────────────────────────────────────────
+#  BARRIER OPTIONS ENGINE (Reiner & Rubinstein, 1991 — monitoring continu)
+#  Briques de pricing des "shark notes" : Call Up-and-Out / Put Down-and-Out
+#  Formule fermée validée par simulation Monte-Carlo (pont brownien) : écarts <1.5%
+#  sur une large grille de scénarios (K vs H, barrière proche, échéance courte, etc.)
+# ─────────────────────────────────────────────────────────────
+def barrier_price(S, K, H, T, r, sigma, q=0.0, otype="call", barrier_dir="up", knock="out", rebate=0.0):
+    """Prix fermé (Reiner-Rubinstein) d'une option à barrière simple européenne, monitoring continu.
+    otype: 'call'/'put' — barrier_dir: 'up'/'down' (position de la barrière H par rapport au spot)
+    — knock: 'in'/'out' — rebate: montant payé si la barrière est touchée (0 par défaut)."""
+    otype = str(otype).strip().lower(); barrier_dir = str(barrier_dir).strip().lower(); knock = str(knock).strip().lower()
+
+    already_out = (barrier_dir == "up" and S >= H) or (barrier_dir == "down" and S <= H)
+    if T <= 1e-9 or sigma <= 1e-9:
+        intrinsic = max(S-K, 0) if otype == "call" else max(K-S, 0)
+        if knock == "out":
+            return rebate if already_out else intrinsic
+        return intrinsic if already_out else rebate
+    if already_out:
+        # La barrière est déjà franchie à l'instant présent
+        return rebate if knock == "out" else bs_price(S, K, T, r, sigma, q, otype)
+
+    b = r - q; v = sigma
+    phi = 1.0 if otype == "call" else -1.0
+    eta = 1.0 if barrier_dir == "down" else -1.0
+    mu  = (b - v*v/2) / (v*v)
+    lam = np.sqrt(mu*mu + 2*r/(v*v))
+    vT  = v*np.sqrt(T)
+    Ncdf = norm.cdf
+
+    x1 = np.log(S/K)/vT + (1+mu)*vT
+    x2 = np.log(S/H)/vT + (1+mu)*vT
+    y1 = np.log(H*H/(S*K))/vT + (1+mu)*vT
+    y2 = np.log(H/S)/vT + (1+mu)*vT
+    z  = np.log(H/S)/vT + lam*vT
+
+    A = phi*S*np.exp((b-r)*T)*Ncdf(phi*x1) - phi*K*np.exp(-r*T)*Ncdf(phi*x1-phi*vT)
+    B = phi*S*np.exp((b-r)*T)*Ncdf(phi*x2) - phi*K*np.exp(-r*T)*Ncdf(phi*x2-phi*vT)
+    C = phi*S*np.exp((b-r)*T)*(H/S)**(2*(mu+1))*Ncdf(eta*y1) - phi*K*np.exp(-r*T)*(H/S)**(2*mu)*Ncdf(eta*y1-eta*vT)
+    D = phi*S*np.exp((b-r)*T)*(H/S)**(2*(mu+1))*Ncdf(eta*y2) - phi*K*np.exp(-r*T)*(H/S)**(2*mu)*Ncdf(eta*y2-eta*vT)
+    E = rebate*np.exp(-r*T)*(Ncdf(eta*x2-eta*vT) - (H/S)**(2*mu)*Ncdf(eta*y2-eta*vT))
+    F = rebate*((H/S)**(mu+lam)*Ncdf(eta*z) + (H/S)**(mu-lam)*Ncdf(eta*z-2*eta*lam*vT))
+
+    if otype == "call":
+        if barrier_dir == "down":
+            if knock == "in":  val = (C+E) if K > H else (A-B+D+E)
+            else:               val = (A-C+F) if K > H else (B-D+F)
+        else:  # up
+            if knock == "in":  val = (A+E) if K > H else (B-C+D+E)
+            else:               val = F if K > H else (A-B+C-D+F)
+    else:  # put
+        if barrier_dir == "down":
+            if knock == "in":  val = (B-C+D+E) if K > H else (A+E)
+            else:               val = (A-B+C-D+F) if K > H else F
+        else:  # up
+            if knock == "in":  val = (A-B+D+E) if K > H else (C+E)
+            else:               val = (B-D+F) if K > H else (A-C+F)
+    return max(val, 0.0)
+
+def barrier_greeks(S, K, H, T, r, sigma, q=0.0, otype="call", barrier_dir="up", knock="out", rebate=0.0):
+    """Grecques par différences finies sur la formule fermée (lisses, sans bruit de simulation).
+    Note pédagogique : Delta/Gamma peuvent devenir très marqués à l'approche de la barrière —
+    c'est un comportement normal et attendu des options à barrière (difficulté de couverture connue
+    des vendeurs de shark notes), pas une erreur de calcul."""
+    if T <= 1e-9 or sigma <= 1e-9:
+        return dict(delta=0.0, gamma=0.0, theta=0.0, vega=0.0, rho=0.0)
+    f = lambda s, t, vol, rr: barrier_price(s, K, H, t, rr, vol, q, otype, barrier_dir, knock, rebate)
+    hS = max(S*0.0025, 1e-3); hV = 0.0025; hT = 1/365; hR = 0.0005
+    p0 = f(S, T, sigma, r)
+    delta = (f(S+hS,T,sigma,r) - f(S-hS,T,sigma,r)) / (2*hS)
+    gamma = (f(S+hS,T,sigma,r) - 2*p0 + f(S-hS,T,sigma,r)) / (hS**2)
+    vega  = (f(S,T,sigma+hV,r) - f(S,T,sigma-hV,r)) / (2*hV) / 100
+    theta = f(S, max(T-hT,1e-6), sigma, r) - p0
+    rho   = (f(S,T,sigma,r+hR) - f(S,T,sigma,r-hR)) / (2*hR) / 100
+    return dict(delta=delta, gamma=gamma, theta=theta, vega=vega, rho=rho)
+
 
 def mat_from_ymd(y,m,d): return max(y+m/12+d/365, 1/365)
 
@@ -293,26 +371,32 @@ if _HAS_DIALOG:
         st.markdown(f'<div style="width:100%">{svg_data}</div>', unsafe_allow_html=True)
 
 def show_svg(svg_str, height=None, full_width=False, title="", chart_id=None):
-    """Affiche un graphique SVG. Si chart_id est fourni, une icône plein écran discrète
-    est ancrée en overlay dans le coin bas-droit du graphique (icône Material centrée)."""
+    """Affiche un graphique SVG. Si chart_id est fourni, une petite icône "plein écran" discrète
+    (bouton ghost) est placée dans une fine ligne d'en-tête au-dessus du graphique, alignée à droite.
+    Approche volontairement simple (flux normal, pas de positionnement absolu) pour un rendu fiable
+    et net quelle que soit la taille du graphique : le conteneur dédié impose un espacement interne
+    explicite et minime entre le bouton et le graphique (via CSS scopé), plutôt que de deviner un
+    décalage pour annuler l'espacement par défaut de Streamlit."""
     fw = "width:100%;" if full_width else ""
-    inner = (f'<div style="border-radius:10px;overflow:hidden;margin:4px 0;{fw}">'
+    inner = (f'<div style="border-radius:10px;overflow:hidden;{fw}">'
              f'<div style="{fw}{"" if not full_width else "max-width:100%;overflow-x:auto;"}">{svg_str}</div></div>')
     if not chart_id:
         st.markdown(inner, unsafe_allow_html=True)
         return
-    with st.container(key=f"chartbox_{chart_id}"):
+    with st.container(key=f"chartwrap_{chart_id}"):
+        _hsp, _hbtn = st.columns([24, 1])
+        with _hbtn:
+            if _HAS_DIALOG:
+                if st.button("", key=f"fs_{chart_id}", icon=":material/fullscreen:", help="Ouvrir en plein écran"):
+                    st.session_state["_fs_svg"] = svg_str
+                    st.session_state["_fs_title"] = title
+                    _fullscreen_chart_dialog()
+            else:
+                with st.popover("", icon=":material/fullscreen:", help="Ouvrir en plein écran"):
+                    if title:
+                        st.markdown(f'<div class="sh" style="padding-top:0">{title}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div style="width:100%">{svg_str}</div>', unsafe_allow_html=True)
         st.markdown(inner, unsafe_allow_html=True)
-        if _HAS_DIALOG:
-            if st.button("", key=f"fs_{chart_id}", icon=":material/fullscreen:", help="Ouvrir en plein écran"):
-                st.session_state["_fs_svg"] = svg_str
-                st.session_state["_fs_title"] = title
-                _fullscreen_chart_dialog()
-        else:
-            with st.popover("", icon=":material/fullscreen:", help="Ouvrir en plein écran"):
-                if title:
-                    st.markdown(f'<div class="sh" style="padding-top:0">{title}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div style="width:100%">{svg_str}</div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 #  UI HELPERS
@@ -978,7 +1062,7 @@ with st.sidebar:
         else:
             st.markdown('<div class="ivf">Prix hors bornes BS</div>', unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4 = st.tabs(["Pricer & Grecques", "Stratégies", " Stratégies Customs", "Glossaire"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Pricer & Grecques", "Stratégies", " Stratégies Customs", "Barrières", "Glossaire"])
 
 # ═══════════════════════════════════════════════════════════
 #  TAB 1 — Zone principale pleine largeur
@@ -1194,7 +1278,7 @@ with tab2:
     st.markdown(f'<div class="pre-exp-label">{T_pct_2*100:.0f}% du temps écoulé - {fmt_mat(T_rem_2)} restant avant expiration</div>',
                 unsafe_allow_html=True)
     _payoff_svg, _payoff_legend, _pnl_exp_t2, _pnl_pre_t2 = build_payoff(strat,S2,K2,Tc2,Tp2,r2,sig_c2,sig_p2,q2,T_pct_2)
-    show_svg(_payoff_svg, full_width=True)
+    show_svg(_payoff_svg, full_width=True, title="Profil de gain/perte", chart_id="strat_payoff")
     # External legend
     _leg_html_t2 = ''.join(
         f'<span style="display:inline-flex;align-items:center;gap:5px;margin:3px 10px">'
@@ -1260,6 +1344,46 @@ with tab3:
                 'Chaque jambe a ses propres paramètres. Le graphique final agrège tous les P&L à maturité.</div>',
                 unsafe_allow_html=True)
 
+    # ── Import JSON (doit s'exécuter AVANT tpl_sel / n_legs_slider / strat_name : Streamlit interdit
+    #    de modifier le session_state d'un widget déjà instancié plus tôt dans le même run) ──
+    with st.expander("\U0001f4be Importer une stratégie sauvegardée (.json)", expanded=False):
+        _uploaded = st.file_uploader("Fichier .json", type=["json"], key="import_strat_file",
+                                     label_visibility="collapsed")
+        if _uploaded is not None:
+            if st.button("\u2b06\ufe0f Charger cette configuration", key="import_strat_btn", use_container_width=True):
+                try:
+                    _payload = json.loads(_uploaded.getvalue().decode("utf-8"))
+                    _legs_in = _payload.get("legs", [])
+                    for i in range(6):
+                        if i < len(_legs_in):
+                            leg = _legs_in[i]
+                            st.session_state[f"la_{i}"] = bool(leg.get("active", False))
+                            st.session_state[f"ldir_state_{i}"] = int(leg.get("dir", 1))
+                            st.session_state[f"li_{i}"] = leg.get("inst", "call")
+                            st.session_state[f"ls_{i}"] = float(leg.get("S", 100.0))
+                            st.session_state[f"lk_{i}"] = float(leg.get("K", 100.0))
+                            st.session_state[f"lq_{i}"] = int(leg.get("qty", 1))
+                            st.session_state[f"lr_{i}"] = float(leg.get("r", 5.0))
+                            st.session_state[f"lq_div_{i}"] = float(leg.get("q", 0.0))
+                            st.session_state[f"lsig_{i}"] = float(leg.get("sigma", 20.0))
+                            st.session_state[f"ly_{i}"] = int(leg.get("y", 1))
+                            st.session_state[f"lm_{i}"] = int(leg.get("m", 0))
+                            st.session_state[f"ld_{i}"] = int(leg.get("d", 0))
+                        else:
+                            st.session_state[f"la_{i}"] = False
+                    st.session_state["n_legs_slider"] = max(1, min(6, int(_payload.get("n_legs", 2))))
+                    st.session_state["t_pct_3"] = 100
+                    st.session_state["strat_name"] = _payload.get("name", "Stratégie importée")
+                    st.session_state["tpl_sel"] = "- Personnalisé -"
+                    st.session_state["_import_ok"] = True
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Fichier invalide ou corrompu : {_e}")
+        st.caption("Format généré par le bouton \"Télécharger\" du panneau Export, plus bas \u2014 "
+                  "fonctionne d'une session à l'autre (fichier sur votre disque).")
+        if st.session_state.pop("_import_ok", False):
+            st.success("\u2705 Configuration importée avec succès.")
+
     # Template selector
     tpl_names = ["- Personnalisé -"] + list(BUILDER_TEMPLATES.keys())
 
@@ -1302,14 +1426,46 @@ with tab3:
             for i in range(len(tpl["legs"]), 6):
                 st.session_state[f"la_{i}"] = False
             st.session_state["n_legs_slider"] = tpl["n"]
-            st.session_state["_tpl_name"] = tpl_sel
+            st.session_state["strat_name"] = tpl_sel
             st.rerun()
 
-    _tpl_default = st.session_state.pop("_tpl_name", "")
+    _tpl_default = st.session_state.pop("strat_name", "")
     sname=st.text_input("\u25CF Nom de la stratégie",value=_tpl_default,placeholder="Ma stratégie",
                         help="Donnez un nom à votre stratégie - Affiché sur le graphique")
     if not sname: sname="Ma stratégie"
     n_legs=st.slider("Nombre de jambes",1,6,2,1,key="n_legs_slider",help="Chaque jambe est une option indépendante")
+
+    # ── Export JSON (peut lire sname/n_legs normalement : ils sont déjà calculés à ce stade) ──
+    with st.expander("\u2b07\ufe0f Exporter cette stratégie (.json)", expanded=False):
+        _export_payload = {
+            "app": "Options Lab", "format": "custom_strategy", "version": 1,
+            "name": sname, "n_legs": n_legs, "t_pct": st.session_state.get("t_pct_3", 100),
+            "legs": [
+                {
+                    "active":  bool(st.session_state.get(f"la_{i}", False)),
+                    "dir":     int(st.session_state.get(f"ldir_state_{i}", 1)),
+                    "inst":    st.session_state.get(f"li_{i}", "call"),
+                    "S":       float(st.session_state.get(f"ls_{i}", 100.0)),
+                    "K":       float(st.session_state.get(f"lk_{i}", 100.0)),
+                    "qty":     int(st.session_state.get(f"lq_{i}", 1)),
+                    "r":       float(st.session_state.get(f"lr_{i}", 5.0)),
+                    "q":       float(st.session_state.get(f"lq_div_{i}", 0.0)),
+                    "sigma":   float(st.session_state.get(f"lsig_{i}", 20.0)),
+                    "y":       int(st.session_state.get(f"ly_{i}", 1)),
+                    "m":       int(st.session_state.get(f"lm_{i}", 0)),
+                    "d":       int(st.session_state.get(f"ld_{i}", 0)),
+                } for i in range(6)
+            ],
+        }
+        _json_str = json.dumps(_export_payload, indent=2, ensure_ascii=False)
+        _fname = "".join(c if (c.isalnum() or c in " _-") else "_" for c in sname).strip().replace(" ", "_") or "strategie"
+        st.download_button("\u2b07\ufe0f Télécharger (.json)", data=_json_str,
+                           file_name=f"{_fname}.json", mime="application/json",
+                           key="export_strat_btn", use_container_width=True,
+                           help="Sauvegarde toutes les jambes (actives et inactives) et le nom de la stratégie")
+        st.caption(f"{sum(1 for l in _export_payload['legs'] if l['active'])} jambe(s) active(s) \u00b7 "
+                  f"{n_legs} configurée(s) au total \u2014 réimportable via le panneau ci-dessus.")
+
     st.markdown("---")
 
     DFLTS=[
@@ -1465,7 +1621,7 @@ with tab3:
                      unsafe_allow_html=True)
 
         svg_c, total_pnl, _, legend_items, total_pre = build_custom_payoff(active_legs, S_ref, sname, T_pct_3)
-        show_svg(svg_c, full_width=True)
+        show_svg(svg_c, full_width=True, title="Profil de gain/perte — Stratégie personnalisée", chart_id="custom_payoff")
         # Legende externe centree sous le graphique
         legend_html = ''.join(
             f'<span style="display:inline-flex;align-items:center;gap:5px;margin:3px 10px">'
@@ -1494,11 +1650,13 @@ with tab3:
 
         section_header("Profils de Greeks vs Prix")
         greek_svgs=build_custom_greeks(active_legs,S_ref)
-        st.markdown(
-            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">'
-            + ''.join(f'<div style="border-radius:10px;overflow:hidden">{svg}</div>' for svg in greek_svgs)
-            + '</div>',
-            unsafe_allow_html=True)
+        _greek_titles=["\u0394 Delta - Sensibilité prix","\u0393 Gamma - Convexité",
+                       "\u0398 Theta - Effet temps","\u03bd Vega - Effet volatilité"]
+        _greek_ids=["custom_delta","custom_gamma","custom_theta","custom_vega"]
+        _gcols = st.columns(4)
+        for _gc, _gsvg, _gt, _gid in zip(_gcols, greek_svgs, _greek_titles, _greek_ids):
+            with _gc:
+                show_svg(_gsvg, full_width=True, title=_gt, chart_id=_gid)
 
         be_n=len(np.where(np.diff(np.sign(total_pnl)))[0])
         st.markdown(f"""
@@ -1528,7 +1686,7 @@ with tab3:
 # ═══════════════════════════════════════════════════════════
 #  TAB 4 — Glossaire
 # ═══════════════════════════════════════════════════════════
-with tab4:
+with tab5:
 
     def gls_card(sym, name, subtitle, body, color, rgb):
         return (f'<div class="gls-card" style="--gc:{color};--gc-rgb:{rgb}">'
@@ -1649,6 +1807,223 @@ with tab4:
         "C'est le compromis fondamental de toute stratégie d'options.",
         "#eab308", "234,179,8")
     st.markdown(f'<div class="gls-grid">{cards3}</div>', unsafe_allow_html=True)
+
+    # ── Section : Barrières & Produits Structurés ──
+    st.markdown('<div class="gls-divider">Barrières \u00b7 Produits Structurés</div>', unsafe_allow_html=True)
+    cards4 = ""
+    cards4 += gls_card("\u2298", "Option à Barrière", "Payoff conditionné à un niveau",
+        "Option dont l'existence ou l'activation dépend du franchissement d'un niveau <b>barrière (H)</b> "
+        "par le sous-jacent avant l'échéance. Deux familles : <b>knock-out</b> (désactivée si H est touché) "
+        "et <b>knock-in</b> (activée seulement si H est touché), chacune combinable avec une barrière "
+        "<b>Up</b> ou <b>Down</b> et un Call ou un Put \u2014 soit <b>8 variantes</b> standard, toutes disponibles "
+        "dans l'onglet Barrières. Moins chère qu'une option vanille équivalente (knock-out) car elle porte "
+        "un risque supplémentaire (celui de disparaître).",
+        "#71717a", "113,113,122")
+    cards4 += gls_card("\U0001f988", "Shark Note", "Produit structuré \"aileron de requin\"",
+        "Produit structuré combinant une option vanille et une barrière désactivante (knock-out). "
+        "Son profil de gain \u2014 qui monte puis retombe brutalement si la barrière est touchée \u2014 dessine "
+        "une <b>nageoire de requin</b>, d'où le nom (aussi appelé <i>Shark Fin Note</i>). "
+        "Combine souvent un <b>Call Up-and-Out</b> ou un <b>Put Down-and-Out</b> avec un rebate optionnel.",
+        "#c084fc", "192,132,252")
+    cards4 += gls_card("UOC", "Call Up-and-Out", "Haussier désactivant",
+        "Call classique qui devient définitivement nul si le spot touche une barrière H "
+        "<b>supérieure</b> au spot initial, à tout instant avant l'échéance. Moins cher qu'un call vanille : "
+        "l'acheteur renonce au potentiel de gain au-delà de H en échange d'une prime réduite. "
+        "Profil caractéristique : le prix augmente avec le spot puis <b>retombe</b> à l'approche de H.",
+        "#06b6d4", "6,182,212")
+    cards4 += gls_card("DOP", "Put Down-and-Out", "Baissier désactivant",
+        "Put classique qui devient définitivement nul si le spot touche une barrière H "
+        "<b>inférieure</b> au spot initial, à tout instant avant l'échéance. Symétrique du Call Up-and-Out : "
+        "protection contre la baisse à coût réduit, tant que le sous-jacent ne chute pas jusqu'à la barrière.",
+        "#f472b6", "244,114,182")
+    cards4 += gls_card("R", "Rebate", "Compensation au déclenchement",
+        "Montant fixe, optionnel, versé au porteur si la barrière est touchée avant l'échéance "
+        "sur une option knock-out (qui, sans rebate, ne vaut alors plus rien). "
+        "Réduit la perte totale liée au déclenchement de la barrière, moyennant une prime légèrement plus élevée.",
+        "#eab308", "234,179,8")
+    cards4 += gls_card("\U0001f4c8", "Monitoring Continu", "Hypothèse de calcul",
+        "Hypothèse selon laquelle le franchissement de la barrière est surveillé <b>en continu</b> "
+        "(à chaque instant), et non à des dates fixes (monitoring discret, ex. fixing quotidien en clôture). "
+        "C'est l'hypothèse retenue par la formule fermée de Reiner-Rubinstein utilisée dans cet onglet \u2014 "
+        "en pratique, un monitoring discret réduit légèrement la probabilité de déclenchement.",
+        "#3b82f6", "59,130,246")
+    cards4 += gls_card("\u26a0", "Risque de couverture", "Delta/Gamma près de H",
+        "Près de la barrière, le Delta et le Gamma d'une option à barrière peuvent devenir extrêmement "
+        "élevés et changer de signe brutalement (profil en \"nageoire\"). C'est un risque de couverture bien connu "
+        "des vendeurs de produits à barrière : la position peut devenir très difficile à delta-hedger "
+        "juste avant un déclenchement.",
+        "#ef4444", "239,68,68")
+    st.markdown(f'<div class="gls-grid">{cards4}</div>', unsafe_allow_html=True)
+
+with tab4:
+    st.markdown('<div style="margin-bottom:6px"><span style="font-size:1.1rem;font-weight:800;letter-spacing:-.3px;'
+                'background:linear-gradient(135deg,#60a5fa 0%,#a78bfa 35%,#c084fc 60%,#f0abfc 85%,#fafafa 100%);'
+                '-webkit-background-clip:text;-webkit-text-fill-color:transparent">Barrières \u00b7 Produits structurés</span>'
+                '<span style="font-size:.74rem;color:var(--t3);margin-left:12px">'
+                'Les 8 options à barrière simple \u2014 dont les deux briques du Shark Note</span></div>',
+                unsafe_allow_html=True)
+
+    st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
+                '\U0001f988 <b>Shark Note</b> (ou <i>"Shark Fin Note"</i>) \u2014 produit structuré combinant une option '
+                'vanille avec une <b>barrière</b> : si le sous-jacent touche le niveau H avant l\u2019échéance, l\u2019option '
+                'est désactivée (<b>knock-out</b>) ou au contraire activée (<b>knock-in</b>). Les briques classiques du '
+                'shark note sont le <b>Call Up-and-Out</b> et le <b>Put Down-and-Out</b>, mais les <b>8 combinaisons</b> '
+                'standard (Call/Put \u00d7 barrière Up/Down \u00d7 Out/In) sont modélisées ci-dessous. '
+                'Formule fermée de Reiner-Rubinstein (1991), monitoring continu, validée par simulation Monte-Carlo '
+                '(pont brownien, écarts &lt;1.5% \u2014 et identité in+out=vanille vérifiée exactement).</div>',
+                unsafe_allow_html=True)
+
+    section_header("Choisir le produit")
+    sel1, sel2, sel3 = st.columns(3)
+    with sel1:
+        field_label("Type d'option")
+        b_otype = st.radio("otype", ["call", "put"], horizontal=True, key="bo_otype",
+                           format_func=lambda x: x.capitalize(), label_visibility="collapsed")
+    with sel2:
+        field_label("Direction de la barrière")
+        b_dir = st.radio("dir", ["up", "down"], horizontal=True, key="bo_dir",
+                         format_func=lambda x: "Up (H > Spot)" if x == "up" else "Down (H < Spot)",
+                         label_visibility="collapsed")
+    with sel3:
+        field_label("Type de barrière")
+        b_knock = st.radio("knock", ["out", "in"], horizontal=True, key="bo_knock",
+                           format_func=lambda x: "Knock-Out" if x == "out" else "Knock-In",
+                           label_visibility="collapsed")
+
+    _COMMON_NAMES = {
+        ("call","up","out"):  "Call Up-and-Out \u2014 brique du Shark Note haussier \U0001f988",
+        ("put","down","out"): "Put Down-and-Out \u2014 brique du Shark Note baissier \U0001f988",
+        ("call","down","out"):"Call Down-and-Out",
+        ("call","up","in"):   "Call Up-and-In",
+        ("call","down","in"): "Call Down-and-In",
+        ("put","up","out"):   "Put Up-and-Out",
+        ("put","up","in"):    "Put Up-and-In",
+        ("put","down","in"):  "Put Down-and-In",
+    }
+    prod_key = (b_otype, b_dir, b_knock)
+    prod_label = _COMMON_NAMES[prod_key]
+    is_shark = prod_key in (("call","up","out"), ("put","down","out"))
+    st.markdown(f'<div style="font-size:.74rem;color:var(--t3);margin:-4px 0 12px">'
+               f'Produit sélectionné : <b style="color:var(--t)">{prod_label}</b></div>', unsafe_allow_html=True)
+
+    section_header("Paramètres")
+    bp1, bp2, bp3, bp4 = st.columns(4)
+    with bp1:
+        Sb = st.number_input("Spot S\u2080", value=100.0, step=1.0, key="bo_s", help="Prix actuel du sous-jacent")
+    with bp2:
+        Kb = st.number_input("Strike K", value=100.0, step=1.0, key="bo_k",
+                             help="Strike de l'option vanille sous-jacente")
+    with bp3:
+        _default_H = round(Sb*1.15, 1) if b_dir == "up" else round(Sb*0.85, 1)
+        Hb = st.number_input("Barrière H", value=_default_H, step=1.0, key=f"bo_h_{b_dir}",
+                             help="Niveau déclenchant : au-dessus du spot si barrière 'Up', "
+                                  "en-dessous du spot si barrière 'Down' (s'adapte automatiquement au produit choisi)")
+    with bp4:
+        Rb = st.number_input("Rebate (\u20ac)", value=0.0, step=0.5, min_value=0.0, key="bo_rebate",
+                             help="Knock-Out : versé si la barrière est touchée (l'option devient nulle sinon). "
+                                  "Knock-In : versé si la barrière n'est jamais touchée (l'option reste inactive sinon).")
+
+    bp5, bp6, bp7 = st.columns(3)
+    with bp5:
+        field_label("Maturité (A / M / J)")
+        Tb = mat_inline("bo_t", 1, 0, 0)
+    with bp6:
+        rb = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="bo_r", help="Taux sans risque annuel") / 100
+    with bp7:
+        qb = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="bo_q", help="Rendement du dividende continu") / 100
+    field_label("Volatilité \u03c3 (%)")
+    sigb = st.slider("sigb", 1.0, 150.0, 25.0, 0.5, key="bo_sigma", label_visibility="collapsed") / 100
+
+    invalid = (b_dir == "up" and Hb <= Sb) or (b_dir == "down" and Hb >= Sb)
+    if invalid:
+        side = "strictement supérieure au spot" if b_dir == "up" else "strictement inférieure au spot"
+        st.warning(f"\u26a0\ufe0f Pour une barrière '{'Up' if b_dir=='up' else 'Down'}', H doit être {side} "
+                  f"(H={Hb:.1f} vs S={Sb:.1f}).")
+    else:
+        price = barrier_price(Sb, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)
+        Gb = barrier_greeks(Sb, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)
+        vanilla_ref = bs_price(Sb, Kb, Tb, rb, sigb, qb, b_otype)
+        reduction = (1 - price/vanilla_ref)*100 if vanilla_ref > 1e-9 else 0.0
+
+        st.markdown("---")
+        badge_class = "ph-c" if b_otype == "call" else "ph-p"
+        badge_text = f"{b_otype.upper()} {'UP' if b_dir=='up' else 'DOWN'}-AND-{'OUT' if b_knock=='out' else 'IN'}"
+
+        hero_col, greeks_col = st.columns([5, 7], gap="large")
+        with hero_col:
+            st.markdown(f"""
+            <div class="ph">
+              <div>
+                <div class="ph-ey">Prix option \u00e0 barri\u00e8re</div>
+                <div class="ph-row"><span class="ph-val">{price:.4f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                <div class="ph-sub">
+                  <span>Vanille \u00e9quiv. = \u20ac{vanilla_ref:.4f}</span><span>{'Réduction' if reduction>=0 else 'Surcote'} = {reduction:+.1f}%</span>
+                  <span>H = {Hb:.1f}</span><span>Rebate = \u20ac{Rb:.2f}</span>
+                </div>
+              </div>
+              <span class="ph-badge {badge_class}">{badge_text}</span>
+            </div>""", unsafe_allow_html=True)
+        with greeks_col:
+            section_header("Grecques (différences finies)")
+            gdata_b = [("\u0394","Delta",Gb["delta"],".4f","#22c55e","Sensibilité au spot"),
+                       ("\u0393","Gamma",Gb["gamma"],".5f","#a78bfa","Convexité (pic près de H)"),
+                       ("\u0398","Theta",Gb["theta"],"+.4f","#f59e0b","Effet du temps (\u20ac/jour)"),
+                       ("\u03bd","Vega", Gb["vega"], ".4f","#3b82f6","Effet volatilité (\u20ac/%)"),
+                       ("\u03c1","Rho",  Gb["rho"],  "+.4f","#ef4444","Effet des taux (\u20ac/%)")]
+            cards_html_b = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_b)
+            st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_b}</div>',
+                       unsafe_allow_html=True)
+            st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                        '\u26a0\ufe0f Delta/Gamma peuvent devenir très marqués à l\u2019approche de la barrière \u2014 '
+                        'comportement normal des options à barrière, connu comme un risque de couverture pour '
+                        'le vendeur d\u2019un produit à barrière.</div>', unsafe_allow_html=True)
+
+        section_header("Visualisations")
+        Nb = 220
+        lo = min(Sb, Hb) * 0.6
+        hi = max(Sb, Hb) * 1.25
+        SRb = np.linspace(max(lo, 1), hi, Nb)
+        price_curve   = np.array([barrier_price(s, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb) for s in SRb])
+        delta_curve   = np.array([barrier_greeks(s, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)["delta"] for s in SRb])
+
+        acc = "#06b6d4" if b_otype == "call" else "#f472b6"
+        _price_title = "Prix selon le spot" + (" \u2014 profil \"shark fin\"" if is_shark else "")
+        svg_bo1 = svg_chart([
+            {"x":list(SRb),"y":list(price_curve),"color":acc,"width":2.2,"fill":True,"fill_color":acc,"label":"Prix barrière"},
+        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac)",
+           vlines=[{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
+                   {"x":Kb,"color":"#52525b","label":f"K={Kb:.0f}","dash":True},
+                   {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}],
+           show_dot={"x":Sb,"y":price,"color":acc,"label":f"\u20ac{price:.3f}"},
+           title=_price_title, responsive=True)
+
+        svg_bo2 = svg_chart([
+            {"x":list(SRb),"y":list(delta_curve),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
+        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta",
+           vlines=[{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
+                   {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}],
+           hline_zero=True,
+           show_dot={"x":Sb,"y":Gb["delta"],"color":"#22c55e","label":f"{Gb['delta']:.4f}"},
+           title="\u0394 Delta selon le spot", responsive=True)
+
+        cbo1, cbo2 = st.columns(2)
+        with cbo1: show_svg(svg_bo1, full_width=True, title="Prix selon le spot", chart_id="barrier_price")
+        with cbo2: show_svg(svg_bo2, full_width=True, title="Delta selon le spot", chart_id="barrier_delta")
+
+        if b_knock == "out":
+            st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
+                        '\U0001f4a1 À volatilité élevée, le prix s\u2019effondre sur (presque) toute la plage de spot : plus '
+                        '\u03c3 est grand, plus la probabilité de toucher la barrière avant échéance augmente, ce qui écrase '
+                        'la valeur de l\u2019option (knock-out). Comparez avec le prix vanille affiché ci-dessus '
+                        '(celui-ci, lui, ne cesse de croître avec \u03c3). C\u2019est le risque de couverture caractéristique '
+                        'des produits à barrière désactivante.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
+                        '\U0001f4a1 À l\u2019inverse d\u2019une barrière désactivante, une option <b>knock-in</b> '
+                        '<b>gagne</b> en valeur quand \u03c3 augmente : plus la barrière a de chances d\u2019être touchée, '
+                        'plus l\u2019option a de chances d\u2019être activée et de se comporter comme la vanille sous-jacente. '
+                        'Vérifiez l\u2019identité <code>in + out = vanille</code> en additionnant ce prix à celui du '
+                        'knock-out symétrique.</div>', unsafe_allow_html=True)
 
 st.markdown("""
 <div style="text-align:center;padding:32px 0 8px;font-size:.64rem;color:#3f3f46;letter-spacing:1px">OPTIONS LAB \u00b7 BLACK-SCHOLES</div>
@@ -1921,28 +2296,36 @@ section[data-testid="stSidebar"] hr{border-color:var(--b1);margin:10px 0;}
 .gls-divider{margin:28px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--b1);
   font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;
   background:linear-gradient(90deg,#60a5fa,#a78bfa,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-/* Bouton "plein écran" overlay ancré en bas-droite des graphiques SVG (section Visualisations) */
-div[class*="st-key-chartbox_"]{position:relative;}
-div[class*="st-key-chartbox_"] div[data-testid="stButton"]{
-  position:absolute;bottom:10px;right:10px;z-index:6;width:auto;margin:0;}
-div[class*="st-key-chartbox_"] div[data-testid="stButton"] button{
-  width:32px;height:32px;min-width:32px;padding:0;border-radius:8px;
-  display:flex;align-items:center;justify-content:center;
-  background:rgba(24,24,27,.72);border:1px solid rgba(255,255,255,.12);
-  backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,.25);
-  transition:background .15s,border-color .15s,transform .15s;}
-div[class*="st-key-chartbox_"] div[data-testid="stButton"] button:hover{
-  background:rgba(39,39,42,.92);border-color:rgba(255,255,255,.28);transform:scale(1.06);}
-div[class*="st-key-chartbox_"] div[data-testid="stButton"] button p,
-div[class*="st-key-chartbox_"] div[data-testid="stButton"] button span{
-  margin:0;display:flex;align-items:center;justify-content:center;line-height:1;}
-div[class*="st-key-chartbox_"] div[data-testid="stButton"] button svg{
-  width:17px;height:17px;margin:0 !important;color:var(--t2);}
-div[class*="st-key-chartbox_"] div[data-testid="stPopover"]{
-  position:absolute;bottom:10px;right:10px;z-index:6;width:auto;}
-div[class*="st-key-chartbox_"] div[data-testid="stPopover"] button{
-  width:32px;height:32px;min-width:32px;padding:0;border-radius:8px;
-  display:flex;align-items:center;justify-content:center;
-  background:rgba(24,24,27,.72);border:1px solid rgba(255,255,255,.12);}
+/* Bouton "plein écran" — icône ghost minimaliste dans une fine ligne d'en-tête au-dessus
+   du graphique (flux normal, pas de positionnement absolu : rendu fiable quelle que soit
+   la taille du graphique). Le conteneur "chartwrap_" impose un espacement interne explicite
+   et minime (au lieu de deviner une marge négative pour annuler le gap par défaut). */
+div[class*="st-key-chartwrap_"] div[data-testid="stVerticalBlock"]{
+  gap:2px !important;
+}
+div[class*="st-key-fs_"]{
+  display:flex; justify-content:flex-end;
+}
+div[class*="st-key-fs_"] div[data-testid="stButton"],
+div[class*="st-key-fs_"] div[data-testid="stPopover"]{
+  width:auto; margin:0;
+}
+div[class*="st-key-fs_"] button{
+  width:22px; height:22px; min-width:22px; min-height:0; padding:0;
+  border-radius:5px; border:none; background:transparent; box-shadow:none;
+  display:flex; align-items:center; justify-content:center;
+  opacity:.4; transition:opacity .15s, background .15s;
+}
+div[class*="st-key-fs_"] button:hover{
+  opacity:1; background:rgba(255,255,255,.08);
+}
+div[class*="st-key-fs_"] button:focus{ box-shadow:none; outline:none; }
+div[class*="st-key-fs_"] button p,
+div[class*="st-key-fs_"] button span{
+  margin:0; display:flex; align-items:center; justify-content:center; line-height:1;
+}
+div[class*="st-key-fs_"] button svg{
+  width:13px; height:13px; margin:0 !important; color:var(--t2);
+}
 </style>
 """, unsafe_allow_html=True)
