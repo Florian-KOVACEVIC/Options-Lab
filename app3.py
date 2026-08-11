@@ -1983,7 +1983,7 @@ with tab4:
                 st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_b}</div>',
                            unsafe_allow_html=True)
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
-                            'Delta/Gamma peuvent devenir très marqués à l'approche de la barrière.'
+                            'Delta/Gamma peuvent devenir très marqués à l'approche de la barrière. '
                             'C'est un comportement normal des options à barrière, connu comme un risque de couverture pour '
                             'le vendeur d'un produit à barrière.</div>', unsafe_allow_html=True)
 
