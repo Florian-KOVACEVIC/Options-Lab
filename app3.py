@@ -2325,7 +2325,7 @@ with tab4:
             st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
                         'La ligne pointillée est le <b>payoff à maturité</b> (plat entre B et S\u2080 - zone de '
                         'protection réelle, sans dépendance au chemin puisque le buffer est une simple observation '
-                        'européenne). La courbe pleine, elle, montre le <b>prix actuel</b> avant échéance : elle n'est '
+                        'européenne). La courbe pleine, elle, montre le <b>prix actuel</b> avant échéance : elle n\'est '
                         '<b>pas plate</b> dans la zone tampon, car la valeur temps des deux options qui composent le '
                         'produit y reste positive. Le graphique de droite confirme que le Gamma - supposé nul pour un '
                         'produit delta one - est en réalité concentré et de signe opposé autour de S\u2080 et B.</div>',
