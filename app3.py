@@ -1985,7 +1985,7 @@ with tab4:
                 st.markdown('"""<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">Content</div>""">'
                             'Delta/Gamma peuvent devenir très marqués à l\'approche de la barrière '
                             'c\'est un comportement normal des options à barrière, connu comme un risque de couverture pour '
-                            'le vendeur d'un produit à barrière.</div>', unsafe_allow_html=True)
+                            'le vendeur d\'un produit à barrière.</div>', unsafe_allow_html=True)
 
             section_header("Visualisations")
             Nb = 220
@@ -2021,26 +2021,26 @@ with tab4:
 
             if b_knock == "out":
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
-                            'À volatilité élevée, le prix s'effondre sur presque toute la plage de spot : plus '
+                            'À volatilité élevée, le prix s\'effondre sur presque toute la plage de spot : plus '
                             '\u03c3 est grand, plus la probabilité de toucher la barrière avant échéance augmente, ce qui écrase '
-                            'la valeur de l'option (knock-out). Comparez avec le prix vanille affiché ci-dessus, '
+                            'la valeur de l\'option (knock-out). Comparez avec le prix vanille affiché ci-dessus, '
                             'celui-ci, lui, ne cesse de croître avec \u03c3. C'est le risque de couverture caractéristique '
                             'des produits à barrière désactivante.</div>', unsafe_allow_html=True)
             else:
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
-                            'À l'inverse d'une barrière désactivante, une option <b>knock-in</b> '
+                            'À l\'inverse d'une barrière désactivante, une option <b>knock-in</b> '
                             '<b>gagne</b> en valeur quand \u03c3 augmente : plus la barrière a de chances d'être touchée, '
-                            'plus l'option a de chances d'être activée et de se comporter comme la vanille sous-jacente. '
-                            'Vérifiez l'identité <code>in + out = vanille</code> en additionnant ce prix à celui du '
+                            'plus l\'option a de chances d'être activée et de se comporter comme la vanille sous-jacente. '
+                            'Vérifiez l\'identité <code>in + out = vanille</code> en additionnant ce prix à celui du '
                             'knock-out symétrique.</div>', unsafe_allow_html=True)
 
     elif prod_family == "twin_win":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001f501 <b>Twin Win</b> - l'investisseur gagne <b>que le sous-jacent monte ou baisse</b>, '
-                    'tant qu'une barrière n'est pas touchée : la performance absolue |Perf| est payée dans les deux sens. '
+                    '\U0001f501 <b>Twin Win</b> - l\'investisseur gagne <b>que le sous-jacent monte ou baisse</b>, '
+                    'tant qu'une barrière n\'est pas touchée : la performance absolue est payée dans les deux sens. '
                     'Si la barrière est franchie, le "gain sur la baisse" (ou sur la hausse, selon la barrière) disparaît - '
                     'le capital reste protégé, mais on perd la composante "twin". Réplication : Zéro-coupon + Call(K=S\u2080) '
-                    '+ Put(K=S\u2080) [éventuellement en barrière], chaque jambe utilisant le moteur validé ci-dessus '
+                    '+ Put(K=S\u2080), chaque jambe utilisant le moteur validé ci-dessus '
                     '(aucune nouvelle formule - seulement une combinaison de briques déjà vérifiées).</div>',
                     unsafe_allow_html=True)
 
@@ -2192,21 +2192,21 @@ with tab4:
             with ctw2: show_svg(svg_tw2, full_width=True, title="Delta selon le spot", chart_id="tw_delta")
 
             st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
-                        'L'écart entre la courbe pleine (prix actuel, qui tient compte de la probabilité de '
-                        'déclenchement) et la ligne pointillée (payoff théorique si les barrières ne sont jamais touchées) '
+                        'L\'écart entre la courbe pleine (prix actuel, qui tient compte de la probabilité de '
+                        'déclenchement) et la ligne pointillée '
                         'mesure le "coût" des barrières. Le Delta change de signe entre la zone basse et la zone haute - '
                         'la note est <b>longue le sous-jacent en-dessous de S\u2080</b> (le put "gagne" si ça baisse) et '
                         '<b>longue au-dessus</b> (le call gagne si ça monte), avec un Gamma élevé autour de S\u2080 '
-                        '(changement de signe du Delta) et près des barrières.</div>', unsafe_allow_html=True)
+                        'et près des barrières.</div>', unsafe_allow_html=True)
 
     elif prod_family == "airbag":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
                     '\U0001fa82 <b>Airbag</b> ou <i>Cushion Note</i> : participation à la hausse au-delà de S\u2080, capital '
                     'protégé dans une <b>zone tampon</b> entre le buffer B et S\u2080, puis <b>perte accélérée (gearing)</b> '
-                    'en-dessous de B. Souvent présenté comme un produit "delta one", mais c'est en réalité une '
+                    'en-dessous de B. Souvent présenté comme un produit delta one, mais c\'est en réalité une '
                     '<b>combinaison d'options vanille</b> : Zéro-coupon + Call(K=S\u2080) \u2212 Gearing\u00d7Put(K=B). '
-                    'Conséquence peu intuitive : le <b>Gamma n'est pas nul</b> - il est positif près de S\u2080 (le call) '
-                    'et négatif près de B (le put vendu), à l'opposé de l'image "delta one" habituellement associée '
+                    'Conséquence peu intuitive : le <b>Gamma n\'est pas nul</b> - il est positif près de S\u2080 (le call) '
+                    'et négatif près de B (le put vendu), à l\'opposé de l\'image delta one habituellement associée '
                     'à ce type de produit.</div>',
                     unsafe_allow_html=True)
 
@@ -2328,7 +2328,7 @@ with tab4:
                         'européenne). La courbe pleine, elle, montre le <b>prix actuel</b> avant échéance : elle n'est '
                         '<b>pas plate</b> dans la zone tampon, car la valeur temps des deux options qui composent le '
                         'produit y reste positive. Le graphique de droite confirme que le Gamma - supposé nul pour un '
-                        'produit "delta one" - est en réalité concentré et de signe opposé autour de S\u2080 et B.</div>',
+                        'produit delta one - est en réalité concentré et de signe opposé autour de S\u2080 et B.</div>',
                         unsafe_allow_html=True)
 
 st.markdown("""
