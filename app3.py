@@ -1982,7 +1982,7 @@ with tab4:
                 cards_html_b = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_b)
                 st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_b}</div>',
                            unsafe_allow_html=True)
-                st.markdown("<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                st.markdown"""<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">Content</div>""">'
                             'Delta/Gamma peuvent devenir très marqués à l\'approche de la barrière '
                             'c\'est un comportement normal des options à barrière, connu comme un risque de couverture pour '
                             'le vendeur d'un produit à barrière.</div>', unsafe_allow_html=True)
