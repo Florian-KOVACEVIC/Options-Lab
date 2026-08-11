@@ -1346,7 +1346,7 @@ with tab3:
 
     # ── Import JSON (doit s'exécuter AVANT tpl_sel / n_legs_slider / strat_name : Streamlit interdit
     #    de modifier le session_state d'un widget déjà instancié plus tôt dans le même run) ──
-    with st.expander("\U0001f4be Importer une stratégie sauvegardée (.json)", expanded=False):
+    with st.expander("Importer une stratégie sauvegardée (.json)", expanded=False):
         _uploaded = st.file_uploader("Fichier .json", type=["json"], key="import_strat_file",
                                      label_visibility="collapsed")
         if _uploaded is not None:
@@ -1380,9 +1380,9 @@ with tab3:
                 except Exception as _e:
                     st.error(f"Fichier invalide ou corrompu : {_e}")
         st.caption("Format généré par le bouton \"Télécharger\" du panneau Export, plus bas - "
-                  "fonctionne d'une session à l'autre (fichier sur votre disque).")
+                  "fonctionne d'une session à l'autre.")
         if st.session_state.pop("_import_ok", False):
-            st.success("\u2705 Configuration importée avec succès.")
+            st.success("Configuration importée avec succès.")
 
     # Template selector
     tpl_names = ["- Personnalisé -"] + list(BUILDER_TEMPLATES.keys())
@@ -1436,7 +1436,7 @@ with tab3:
     n_legs=st.slider("Nombre de jambes",1,6,2,1,key="n_legs_slider",help="Chaque jambe est une option indépendante")
 
     # ── Export JSON (peut lire sname/n_legs normalement : ils sont déjà calculés à ce stade) ──
-    with st.expander("\u2b07\ufe0f Exporter cette stratégie (.json)", expanded=False):
+    with st.expander("Exporter cette stratégie (.json)", expanded=False):
         _export_payload = {
             "app": "Options Lab", "format": "custom_strategy", "version": 1,
             "name": sname, "n_legs": n_legs, "t_pct": st.session_state.get("t_pct_3", 100),
@@ -1459,7 +1459,7 @@ with tab3:
         }
         _json_str = json.dumps(_export_payload, indent=2, ensure_ascii=False)
         _fname = "".join(c if (c.isalnum() or c in " _-") else "_" for c in sname).strip().replace(" ", "_") or "strategie"
-        st.download_button("\u2b07\ufe0f Télécharger (.json)", data=_json_str,
+        st.download_button("Télécharger (.json)", data=_json_str,
                            file_name=f"{_fname}.json", mime="application/json",
                            key="export_strat_btn", use_container_width=True,
                            help="Sauvegarde toutes les jambes (actives et inactives) et le nom de la stratégie")
