@@ -959,7 +959,7 @@ st.markdown("""
 <div class="hdr">
   <div class="hdr-l">
     <div class="hdr-ico">\u25c8</div>
-    <div><div class="hdr-t">Options Lab</div><div class="hdr-s">Pricer Black-Scholes \u00b7 Grecques \u00b7 Stratégies</div></div>
+    <div><div class="hdr-t">Options Lab</div><div class="hdr-s">Pricer Black & Scholes \u00b7 Grecques \u00b7 Stratégies \u00b7 Produits Structurés </div></div>
   </div>
 </div>""", unsafe_allow_html=True)
 
@@ -1062,7 +1062,7 @@ with st.sidebar:
         else:
             st.markdown('<div class="ivf">Prix hors bornes BS</div>', unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Pricer & Grecques", "Stratégies", " Stratégies Customs", "Barrières", "Glossaire"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Pricer & Grecques", "Stratégies", " Stratégies Customs", "Produits structurés", "Glossaire"])
 
 # ═══════════════════════════════════════════════════════════
 #  TAB 1 — Zone principale pleine largeur
@@ -1379,7 +1379,7 @@ with tab3:
                     st.rerun()
                 except Exception as _e:
                     st.error(f"Fichier invalide ou corrompu : {_e}")
-        st.caption("Format généré par le bouton \"Télécharger\" du panneau Export, plus bas \u2014 "
+        st.caption("Format généré par le bouton \"Télécharger\" du panneau Export, plus bas - "
                   "fonctionne d'une session à l'autre (fichier sur votre disque).")
         if st.session_state.pop("_import_ok", False):
             st.success("\u2705 Configuration importée avec succès.")
@@ -1464,7 +1464,7 @@ with tab3:
                            key="export_strat_btn", use_container_width=True,
                            help="Sauvegarde toutes les jambes (actives et inactives) et le nom de la stratégie")
         st.caption(f"{sum(1 for l in _export_payload['legs'] if l['active'])} jambe(s) active(s) \u00b7 "
-                  f"{n_legs} configurée(s) au total \u2014 réimportable via le panneau ci-dessus.")
+                  f"{n_legs} configurée(s) au total - réimportable via le panneau ci-dessus.")
 
     st.markdown("---")
 
@@ -1815,14 +1815,14 @@ with tab5:
         "Option dont l'existence ou l'activation dépend du franchissement d'un niveau <b>barrière (H)</b> "
         "par le sous-jacent avant l'échéance. Deux familles : <b>knock-out</b> (désactivée si H est touché) "
         "et <b>knock-in</b> (activée seulement si H est touché), chacune combinable avec une barrière "
-        "<b>Up</b> ou <b>Down</b> et un Call ou un Put \u2014 soit <b>8 variantes</b> standard, toutes disponibles "
-        "dans l'onglet Barrières. Moins chère qu'une option vanille équivalente (knock-out) car elle porte "
+        "<b>Up</b> ou <b>Down</b> et un Call ou un Put - soit <b>8 variantes</b> standard, toutes disponibles "
+        "dans l'onglet Produits Structurés. Moins chère qu'une option vanille équivalente (knock-out) car elle porte "
         "un risque supplémentaire (celui de disparaître).",
         "#71717a", "113,113,122")
     cards4 += gls_card("\U0001f988", "Shark Note", "Produit structuré \"aileron de requin\"",
         "Produit structuré combinant une option vanille et une barrière désactivante (knock-out). "
-        "Son profil de gain \u2014 qui monte puis retombe brutalement si la barrière est touchée \u2014 dessine "
-        "une <b>nageoire de requin</b>, d'où le nom (aussi appelé <i>Shark Fin Note</i>). "
+        "Son profil de gain - qui monte puis retombe brutalement si la barrière est touchée - dessine "
+        "une <b>nageoire de requin</b>, d'où le nom. "
         "Combine souvent un <b>Call Up-and-Out</b> ou un <b>Put Down-and-Out</b> avec un rebate optionnel.",
         "#c084fc", "192,132,252")
     cards4 += gls_card("UOC", "Call Up-and-Out", "Haussier désactivant",
@@ -1844,7 +1844,7 @@ with tab5:
     cards4 += gls_card("\U0001f4c8", "Monitoring Continu", "Hypothèse de calcul",
         "Hypothèse selon laquelle le franchissement de la barrière est surveillé <b>en continu</b> "
         "(à chaque instant), et non à des dates fixes (monitoring discret, ex. fixing quotidien en clôture). "
-        "C'est l'hypothèse retenue par la formule fermée de Reiner-Rubinstein utilisée dans cet onglet \u2014 "
+        "C'est l'hypothèse retenue par la formule fermée de Reiner-Rubinstein utilisée dans cet onglet - "
         "en pratique, un monitoring discret réduit légèrement la probabilité de déclenchement.",
         "#3b82f6", "59,130,246")
     cards4 += gls_card("\u26a0", "Risque de couverture", "Delta/Gamma près de H",
@@ -1865,7 +1865,7 @@ with tab4:
 
     section_header("Famille de produit")
     prod_family = st.radio("famille", ["barrier_simple", "twin_win", "airbag"], horizontal=True, key="bo_family",
-                           format_func=lambda x: {"barrier_simple": "Option à barrière simple",
+                           format_func=lambda x: {"barrier_simple": "Shark Note",
                                                   "twin_win": "Twin Win",
                                                   "airbag": "Airbag / Cushion"}[x],
                            label_visibility="collapsed")
@@ -1873,13 +1873,13 @@ with tab4:
 
     if prod_family == "barrier_simple":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001f988 <b>Shark Note</b> (ou <i>"Shark Fin Note"</i>) \u2014 produit structuré combinant une option '
-                    'vanille avec une <b>barrière</b> : si le sous-jacent touche le niveau H avant l\u2019échéance, l\u2019option '
+                    '\U0001f988 <b>Shark Note</b> - produit structuré combinant une option '
+                    'vanille avec une <b>barrière</b> : si le sous-jacent touche le niveau H avant l'échéance, l'option '
                     'est désactivée (<b>knock-out</b>) ou au contraire activée (<b>knock-in</b>). Les briques classiques du '
                     'shark note sont le <b>Call Up-and-Out</b> et le <b>Put Down-and-Out</b>, mais les <b>8 combinaisons</b> '
                     'standard (Call/Put \u00d7 barrière Up/Down \u00d7 Out/In) sont modélisées ci-dessous. '
-                    'Formule fermée de Reiner-Rubinstein (1991), monitoring continu, validée par simulation Monte-Carlo '
-                    '(pont brownien, écarts &lt;1.5% \u2014 et identité in+out=vanille vérifiée exactement).</div>',
+                    'Formule fermée de Reiner-Rubinstein, validée par simulation Monte-Carlo '
+                    '(pont brownien, écarts &lt;1.5% - et identité in+out=vanille vérifiée exactement).</div>',
                     unsafe_allow_html=True)
 
         section_header("Choisir le produit")
@@ -1900,8 +1900,8 @@ with tab4:
                                label_visibility="collapsed")
 
         _COMMON_NAMES = {
-            ("call","up","out"):  "Call Up-and-Out \u2014 brique du Shark Note haussier \U0001f988",
-            ("put","down","out"): "Put Down-and-Out \u2014 brique du Shark Note baissier \U0001f988",
+            ("call","up","out"):  "Call Up-and-Out - brique du Shark Note haussier",
+            ("put","down","out"): "Put Down-and-Out - brique du Shark Note baissier",
             ("call","down","out"):"Call Down-and-Out",
             ("call","up","in"):   "Call Up-and-In",
             ("call","down","in"): "Call Down-and-In",
@@ -1946,7 +1946,7 @@ with tab4:
         invalid = (b_dir == "up" and Hb <= Sb) or (b_dir == "down" and Hb >= Sb)
         if invalid:
             side = "strictement supérieure au spot" if b_dir == "up" else "strictement inférieure au spot"
-            st.warning(f"\u26a0\ufe0f Pour une barrière '{'Up' if b_dir=='up' else 'Down'}', H doit être {side} "
+            st.warning(f"Pour une barrière '{'Up' if b_dir=='up' else 'Down'}', H doit être {side} "
                       f"(H={Hb:.1f} vs S={Sb:.1f}).")
         else:
             price = barrier_price(Sb, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)
@@ -1983,9 +1983,9 @@ with tab4:
                 st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_b}</div>',
                            unsafe_allow_html=True)
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
-                            '\u26a0\ufe0f Delta/Gamma peuvent devenir très marqués à l\u2019approche de la barrière \u2014 '
+                            'Delta/Gamma peuvent devenir très marqués à l'approche de la barrière - '
                             'comportement normal des options à barrière, connu comme un risque de couverture pour '
-                            'le vendeur d\u2019un produit à barrière.</div>', unsafe_allow_html=True)
+                            'le vendeur d'un produit à barrière.</div>', unsafe_allow_html=True)
 
             section_header("Visualisations")
             Nb = 220
@@ -1996,7 +1996,7 @@ with tab4:
             delta_curve   = np.array([barrier_greeks(s, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)["delta"] for s in SRb])
 
             acc = "#06b6d4" if b_otype == "call" else "#f472b6"
-            _price_title = "Prix selon le spot" + (" \u2014 profil \"shark fin\"" if is_shark else "")
+            _price_title = "Prix selon le spot" + (" - profil \"shark fin\"" if is_shark else "")
             svg_bo1 = svg_chart([
                 {"x":list(SRb),"y":list(price_curve),"color":acc,"width":2.2,"fill":True,"fill_color":acc,"label":"Prix barrière"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac)",
@@ -2021,27 +2021,27 @@ with tab4:
 
             if b_knock == "out":
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
-                            '\U0001f4a1 À volatilité élevée, le prix s\u2019effondre sur (presque) toute la plage de spot : plus '
+                            'À volatilité élevée, le prix s'effondre sur presque toute la plage de spot : plus '
                             '\u03c3 est grand, plus la probabilité de toucher la barrière avant échéance augmente, ce qui écrase '
-                            'la valeur de l\u2019option (knock-out). Comparez avec le prix vanille affiché ci-dessus '
-                            '(celui-ci, lui, ne cesse de croître avec \u03c3). C\u2019est le risque de couverture caractéristique '
+                            'la valeur de l'option (knock-out). Comparez avec le prix vanille affiché ci-dessus, '
+                            'celui-ci, lui, ne cesse de croître avec \u03c3. C'est le risque de couverture caractéristique '
                             'des produits à barrière désactivante.</div>', unsafe_allow_html=True)
             else:
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
-                            '\U0001f4a1 À l\u2019inverse d\u2019une barrière désactivante, une option <b>knock-in</b> '
-                            '<b>gagne</b> en valeur quand \u03c3 augmente : plus la barrière a de chances d\u2019être touchée, '
-                            'plus l\u2019option a de chances d\u2019être activée et de se comporter comme la vanille sous-jacente. '
-                            'Vérifiez l\u2019identité <code>in + out = vanille</code> en additionnant ce prix à celui du '
+                            'À l'inverse d'une barrière désactivante, une option <b>knock-in</b> '
+                            '<b>gagne</b> en valeur quand \u03c3 augmente : plus la barrière a de chances d'être touchée, '
+                            'plus l'option a de chances d'être activée et de se comporter comme la vanille sous-jacente. '
+                            'Vérifiez l'identité <code>in + out = vanille</code> en additionnant ce prix à celui du '
                             'knock-out symétrique.</div>', unsafe_allow_html=True)
 
     elif prod_family == "twin_win":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001f501 <b>Twin Win</b> \u2014 l\u2019investisseur gagne <b>que le sous-jacent monte ou baisse</b>, '
-                    'tant qu\u2019une barrière n\u2019est pas touchée : la performance absolue |Perf| est payée dans les deux sens. '
-                    'Si la barrière est franchie, le "gain sur la baisse" (ou sur la hausse, selon la barrière) disparaît \u2014 '
+                    '\U0001f501 <b>Twin Win</b> - l'investisseur gagne <b>que le sous-jacent monte ou baisse</b>, '
+                    'tant qu'une barrière n'est pas touchée : la performance absolue |Perf| est payée dans les deux sens. '
+                    'Si la barrière est franchie, le "gain sur la baisse" (ou sur la hausse, selon la barrière) disparaît - '
                     'le capital reste protégé, mais on perd la composante "twin". Réplication : Zéro-coupon + Call(K=S\u2080) '
                     '+ Put(K=S\u2080) [éventuellement en barrière], chaque jambe utilisant le moteur validé ci-dessus '
-                    '(aucune nouvelle formule \u2014 seulement une combinaison de briques déjà vérifiées).</div>',
+                    '(aucune nouvelle formule - seulement une combinaison de briques déjà vérifiées).</div>',
                     unsafe_allow_html=True)
 
         section_header("Barrières actives")
@@ -2051,7 +2051,7 @@ with tab4:
         with twc2:
             tw_high_active = st.checkbox("Barrière haute (plafonne le 'gain sur la hausse')", value=False, key="tw_high_active")
         if not tw_low_active and not tw_high_active:
-            st.caption("Aucune barrière active \u2014 Twin Win \"pur\", sans plafond ni désactivation (rare en pratique, "
+            st.caption("Aucune barrière active - Twin Win \"pur\", sans plafond ni désactivation (rare en pratique, "
                       "utile pour comprendre la structure de base).")
 
         section_header("Paramètres")
@@ -2091,7 +2091,7 @@ with tab4:
 
         _tw_invalid = (tw_low_active and H_low >= Stw) or (tw_high_active and H_high <= Stw)
         if _tw_invalid:
-            st.warning("\u26a0\ufe0f La barrière basse doit être strictement inférieure au spot, "
+            st.warning("La barrière basse doit être strictement inférieure au spot, "
                       "et la barrière haute strictement supérieure.")
         else:
             def _tw_call_leg(S, T, r, sigma, q, rebate=R_high):
@@ -2154,8 +2154,8 @@ with tab4:
                 st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_tw}</div>',
                            unsafe_allow_html=True)
                 st.markdown(f'<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
-                           f'\U0001f4a1 Un rebate de \u20ac{R_low:.2f} (basse) / \u20ac{R_high:.2f} (haute) ajoute '
-                           f'<b>{rebate_impact:+.3f}\u20ac</b> au prix de la note par rapport à un rebate nul : c\u2019est le coût '
+                           f'Un rebate de \u20ac{R_low:.2f} (basse) / \u20ac{R_high:.2f} (haute) ajoute '
+                           f'<b>{rebate_impact:+.3f}\u20ac</b> au prix de la note par rapport à un rebate nul : c'est le coût '
                            f'de la compensation versée en cas de déclenchement.</div>', unsafe_allow_html=True)
 
             section_header("Visualisations")
@@ -2192,21 +2192,21 @@ with tab4:
             with ctw2: show_svg(svg_tw2, full_width=True, title="Delta selon le spot", chart_id="tw_delta")
 
             st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
-                        '\U0001f4a1 L\u2019écart entre la courbe pleine (prix actuel, qui tient compte de la probabilité de '
+                        'L'écart entre la courbe pleine (prix actuel, qui tient compte de la probabilité de '
                         'déclenchement) et la ligne pointillée (payoff théorique si les barrières ne sont jamais touchées) '
-                        'mesure le "coût" des barrières. Le Delta change de signe entre la zone basse et la zone haute \u2014 '
+                        'mesure le "coût" des barrières. Le Delta change de signe entre la zone basse et la zone haute - '
                         'la note est <b>longue le sous-jacent en-dessous de S\u2080</b> (le put "gagne" si ça baisse) et '
                         '<b>longue au-dessus</b> (le call gagne si ça monte), avec un Gamma élevé autour de S\u2080 '
                         '(changement de signe du Delta) et près des barrières.</div>', unsafe_allow_html=True)
 
     elif prod_family == "airbag":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001fa82 <b>Airbag</b> (ou <i>Cushion Note</i>) \u2014 participation à la hausse au-delà de S\u2080, capital '
+                    '\U0001fa82 <b>Airbag</b> ou <i>Cushion Note</i> : participation à la hausse au-delà de S\u2080, capital '
                     'protégé dans une <b>zone tampon</b> entre le buffer B et S\u2080, puis <b>perte accélérée (gearing)</b> '
-                    'en-dessous de B. Souvent présenté comme un produit "delta one", mais c\u2019est en réalité une '
-                    '<b>combinaison d\u2019options vanille</b> : Zéro-coupon + Call(K=S\u2080) \u2212 Gearing\u00d7Put(K=B). '
-                    'Conséquence peu intuitive : le <b>Gamma n\u2019est pas nul</b> \u2014 il est positif près de S\u2080 (le call) '
-                    'et négatif près de B (le put vendu), à l\u2019opposé de l\u2019image "delta one" habituellement associée '
+                    'en-dessous de B. Souvent présenté comme un produit "delta one", mais c'est en réalité une '
+                    '<b>combinaison d'options vanille</b> : Zéro-coupon + Call(K=S\u2080) \u2212 Gearing\u00d7Put(K=B). '
+                    'Conséquence peu intuitive : le <b>Gamma n'est pas nul</b> - il est positif près de S\u2080 (le call) '
+                    'et négatif près de B (le put vendu), à l'opposé de l'image "delta one" habituellement associée '
                     'à ce type de produit.</div>',
                     unsafe_allow_html=True)
 
@@ -2217,18 +2217,18 @@ with tab4:
                                   help="Niveau de référence pour la participation à la hausse")
         with abp2:
             Bab = st.number_input("Buffer B", value=round(Sab*0.8, 1), step=1.0, key="ab_b",
-                                  help="Doit être strictement inférieur au spot S\u2080 \u2014 zone protégée entre B et S\u2080")
+                                  help="Doit être strictement inférieur au spot S\u2080 - zone protégée entre B et S\u2080")
         with abp3:
             Part_ab = st.slider("Participation hausse (%)", 0, 300, 100, 5, key="ab_part") / 100
         with abp4:
             Gear_ab = st.slider("Gearing baisse (\u00d7)", 1.0, 5.0, 1.0, 0.1, key="ab_gear",
-                                help="Multiplicateur de perte en-dessous du buffer \u2014 souvent proche de S\u2080/B "
+                                help="Multiplicateur de perte en-dessous du buffer - souvent proche de S\u2080/B "
                                      "pour un airbag \"pur\"")
 
         abp5, abp6, abp7 = st.columns(3)
         with abp5:
             field_label("Maturité (A / M / J)")
-            Tab = mat_inline("ab_t", 1, 0, 0)
+            Tab = mat_inline("ab_t", 0, 1, 15)
         with abp6:
             rab = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="ab_r") / 100
         with abp7:
@@ -2237,7 +2237,7 @@ with tab4:
         sigab = st.slider("sigab", 1.0, 150.0, 25.0, 0.5, key="ab_sigma", label_visibility="collapsed") / 100
 
         if Bab >= Sab:
-            st.warning("\u26a0\ufe0f Le buffer B doit être strictement inférieur au spot/strike S\u2080.")
+            st.warning("Le buffer B doit être strictement inférieur au spot/strike S\u2080.")
         else:
             def _ab_note_price(S, T, r, sigma, q):
                 zc = 100 * np.exp(-r*T)
@@ -2289,7 +2289,7 @@ with tab4:
                 st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_ab}</div>',
                            unsafe_allow_html=True)
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
-                           '\u26a0\ufe0f <b>Le Gamma n\u2019est pas nul</b>, contrairement à l\u2019intuition "delta one" : '
+                           '<b>Le Gamma n'est pas nul</b>, contrairement à l'intuition "delta one" : '
                            'positif près de S\u2080 (Call long) et négatif près de B (Put vendu). Regardez le graphique '
                            'Gamma ci-dessous pour visualiser ces deux pics de signe opposé.</div>', unsafe_allow_html=True)
 
@@ -2316,19 +2316,19 @@ with tab4:
                 {"x":list(SRab),"y":list(gamma_curve_ab),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_ab, hline_zero=True,
                show_dot={"x":Sab,"y":Gab["gamma"],"color":"#a78bfa","label":f"{Gab['gamma']:.4f}"},
-               title="\u0393 Gamma selon le spot \u2014 positif (S\u2080) / négatif (B)", responsive=True)
+               title="\u0393 Gamma selon le spot - positif (S\u2080) / négatif (B)", responsive=True)
 
             cab1, cab2 = st.columns(2)
             with cab1: show_svg(svg_ab1, full_width=True, title="Prix de la note selon le spot", chart_id="ab_price")
             with cab2: show_svg(svg_ab2, full_width=True, title="Gamma selon le spot", chart_id="ab_gamma")
 
             st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
-                        '\U0001f4a1 La ligne pointillée est le <b>payoff à maturité</b> (plat entre B et S\u2080 \u2014 zone de '
+                        'La ligne pointillée est le <b>payoff à maturité</b> (plat entre B et S\u2080 - zone de '
                         'protection réelle, sans dépendance au chemin puisque le buffer est une simple observation '
-                        'européenne). La courbe pleine, elle, montre le <b>prix actuel</b> avant échéance : elle n\u2019est '
+                        'européenne). La courbe pleine, elle, montre le <b>prix actuel</b> avant échéance : elle n'est '
                         '<b>pas plate</b> dans la zone tampon, car la valeur temps des deux options qui composent le '
-                        'produit y reste positive. Le graphique de droite confirme que le Gamma \u2014 supposé nul pour un '
-                        'produit "delta one" \u2014 est en réalité concentré et de signe opposé autour de S\u2080 et B.</div>',
+                        'produit y reste positive. Le graphique de droite confirme que le Gamma - supposé nul pour un '
+                        'produit "delta one" - est en réalité concentré et de signe opposé autour de S\u2080 et B.</div>',
                         unsafe_allow_html=True)
 
 st.markdown("""
