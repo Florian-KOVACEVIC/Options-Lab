@@ -2024,20 +2024,20 @@ with tab4:
                             'À volatilité élevée, le prix s\'effondre sur presque toute la plage de spot : plus '
                             '\u03c3 est grand, plus la probabilité de toucher la barrière avant échéance augmente, ce qui écrase '
                             'la valeur de l\'option (knock-out). Comparez avec le prix vanille affiché ci-dessus, '
-                            'celui-ci, lui, ne cesse de croître avec \u03c3. C'est le risque de couverture caractéristique '
+                            'celui-ci, lui, ne cesse de croître avec \u03c3. C\'est le risque de couverture caractéristique '
                             'des produits à barrière désactivante.</div>', unsafe_allow_html=True)
             else:
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
-                            'À l\'inverse d'une barrière désactivante, une option <b>knock-in</b> '
-                            '<b>gagne</b> en valeur quand \u03c3 augmente : plus la barrière a de chances d'être touchée, '
-                            'plus l\'option a de chances d'être activée et de se comporter comme la vanille sous-jacente. '
+                            'À l\'inverse d\'une barrière désactivante, une option <b>knock-in</b> '
+                            '<b>gagne</b> en valeur quand \u03c3 augmente : plus la barrière a de chances d\'être touchée, '
+                            'plus l\'option a de chances d\'être activée et de se comporter comme la vanille sous-jacente. '
                             'Vérifiez l\'identité <code>in + out = vanille</code> en additionnant ce prix à celui du '
                             'knock-out symétrique.</div>', unsafe_allow_html=True)
 
     elif prod_family == "twin_win":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
                     '\U0001f501 <b>Twin Win</b> - l\'investisseur gagne <b>que le sous-jacent monte ou baisse</b>, '
-                    'tant qu'une barrière n\'est pas touchée : la performance absolue est payée dans les deux sens. '
+                    'tant qu\'une barrière n\'est pas touchée : la performance absolue est payée dans les deux sens. '
                     'Si la barrière est franchie, le "gain sur la baisse" (ou sur la hausse, selon la barrière) disparaît - '
                     'le capital reste protégé, mais on perd la composante "twin". Réplication : Zéro-coupon + Call(K=S\u2080) '
                     '+ Put(K=S\u2080), chaque jambe utilisant le moteur validé ci-dessus '
@@ -2155,7 +2155,7 @@ with tab4:
                            unsafe_allow_html=True)
                 st.markdown(f'<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
                            f'Un rebate de \u20ac{R_low:.2f} (basse) / \u20ac{R_high:.2f} (haute) ajoute '
-                           f'<b>{rebate_impact:+.3f}\u20ac</b> au prix de la note par rapport à un rebate nul : c'est le coût '
+                           f'<b>{rebate_impact:+.3f}\u20ac</b> au prix de la note par rapport à un rebate nul : c\'est le coût '
                            f'de la compensation versée en cas de déclenchement.</div>', unsafe_allow_html=True)
 
             section_header("Visualisations")
@@ -2204,7 +2204,7 @@ with tab4:
                     '\U0001fa82 <b>Airbag</b> ou <i>Cushion Note</i> : participation à la hausse au-delà de S\u2080, capital '
                     'protégé dans une <b>zone tampon</b> entre le buffer B et S\u2080, puis <b>perte accélérée (gearing)</b> '
                     'en-dessous de B. Souvent présenté comme un produit delta one, mais c\'est en réalité une '
-                    '<b>combinaison d'options vanille</b> : Zéro-coupon + Call(K=S\u2080) \u2212 Gearing\u00d7Put(K=B). '
+                    '<b>combinaison d\'options vanille</b> : Zéro-coupon + Call(K=S\u2080) \u2212 Gearing\u00d7Put(K=B). '
                     'Conséquence peu intuitive : le <b>Gamma n\'est pas nul</b> - il est positif près de S\u2080 (le call) '
                     'et négatif près de B (le put vendu), à l\'opposé de l\'image delta one habituellement associée '
                     'à ce type de produit.</div>',
@@ -2289,7 +2289,7 @@ with tab4:
                 st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_ab}</div>',
                            unsafe_allow_html=True)
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
-                           '<b>Le Gamma n'est pas nul</b>, contrairement à l'intuition "delta one" : '
+                           '<b>Le Gamma n\'est pas nul</b>, contrairement à l\'intuition delta one : '
                            'positif près de S\u2080 (Call long) et négatif près de B (Put vendu). Regardez le graphique '
                            'Gamma ci-dessous pour visualiser ces deux pics de signe opposé.</div>', unsafe_allow_html=True)
 
@@ -2336,10 +2336,10 @@ st.markdown("""
 <div style="text-align:center;padding:0 40px 24px;font-size:.64rem;color:#3f3f46;line-height:1.7;max-width:800px;margin:0 auto">
   Les résultats fournis par cette application reposent sur le modèle théorique de Black-Scholes
   et sont présentés à titre purement informatif et pédagogique. Ils ne constituent en aucun cas
-  un conseil en investissement, une recommandation d'achat ou de vente, ni une garantie de résultat.
-  Les marchés d'options comportent des risques significatifs, y compris la perte totale du capital investi.
+  un conseil en investissement, une recommandation d\'achat ou de vente, ni une garantie de résultat.
+  Les marchés d\'options comportent des risques significatifs, y compris la perte totale du capital investi.
   Les calculs peuvent contenir des approximations inhérentes au modèle (volatilité constante, marchés sans friction, etc.).
-  Consultez un professionnel agréé avant toute décision d'investissement.
+  Consultez un professionnel agréé avant toute décision d\'investissement.
 </div>
 """, unsafe_allow_html=True)
 
