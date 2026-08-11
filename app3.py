@@ -1872,14 +1872,14 @@ with tab4:
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
     if prod_family == "barrier_simple":
-        st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
+        st.markdown("""<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
                     '\U0001f988 <b>Shark Note</b> - produit structuré combinant une option '
                     'vanille avec une <b>barrière</b> : si le sous-jacent touche le niveau H avant l'échéance, l'option '
                     'est désactivée (<b>knock-out</b>) ou au contraire activée (<b>knock-in</b>). Les briques classiques du '
                     'shark note sont le <b>Call Up-and-Out</b> et le <b>Put Down-and-Out</b>, mais les <b>8 combinaisons</b> '
                     'standard (Call/Put \u00d7 barrière Up/Down \u00d7 Out/In) sont modélisées ci-dessous. '
                     'Formule fermée de Reiner-Rubinstein, validée par simulation Monte-Carlo '
-                    '(pont brownien, écarts &lt;1.5% - et identité in+out=vanille vérifiée exactement).</div>',
+                    '(pont brownien, écarts &lt;1.5% - et identité in+out=vanille vérifiée exactement).</div>""",
                     unsafe_allow_html=True)
 
         section_header("Choisir le produit")
@@ -1935,7 +1935,7 @@ with tab4:
         bp5, bp6, bp7 = st.columns(3)
         with bp5:
             field_label("Maturité (A / M / J)")
-            Tb = mat_inline("bo_t", 1, 0, 0)
+            Tb = mat_inline("bo_t", 0, 1, 15)
         with bp6:
             rb = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="bo_r", help="Taux sans risque annuel") / 100
         with bp7:
