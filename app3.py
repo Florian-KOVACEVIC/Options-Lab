@@ -407,8 +407,14 @@ def svg_chart(
         label = show_dot.get("label","")
         svg.append(f'<circle cx="{xp:.1f}" cy="{yp:.1f}" r="5" fill="{col}" stroke="{BG_SVG}" stroke-width="1.5"/>')
         if label:
-            svg.append(f'<text x="{xp+8:.1f}" y="{yp+4:.1f}" font-family="DM Mono,monospace" '
-                       f'font-size="10.5" fill="{col}">{label}</text>')
+            _lbl_w = len(label)*6.3 + 12
+            _flip = (xp + 8 + _lbl_w) > (W - PAD_R)
+            _lx = (xp - 8 - _lbl_w) if _flip else (xp + 8)
+            _ly = yp + 4
+            svg.append(f'<rect x="{_lx-4:.1f}" y="{_ly-11:.1f}" width="{_lbl_w:.0f}" height="16" rx="4" '
+                       f'fill="{BG_SVG}" fill-opacity="0.92" stroke="{col}" stroke-opacity="0.35" stroke-width="1"/>')
+            svg.append(f'<text x="{_lx:.1f}" y="{_ly:.1f}" font-family="DM Mono,monospace" '
+                       f'font-size="10.5" font-weight="600" fill="{col}">{label}</text>')
 
     # Legend — multi-line wrap
     lx, ly = PAD_L+4, PAD_T+6
@@ -1199,6 +1205,17 @@ with st.sidebar:
         else:
             st.markdown('<div class="ivf">Prix hors bornes BS</div>', unsafe_allow_html=True)
 
+# ─────────────────────────────────────────────────────────────
+#  Persistance de la sélection courante via l'URL (query params) : contrairement à
+#  st.session_state, ceci survit à un rafraîchissement de page ou une reconnexion Streamlit
+#  (ex. après une période d'inactivité), qui vide sinon toutes les sélections en cours.
+# ─────────────────────────────────────────────────────────────
+_qp = st.query_params
+if "bo_family" not in st.session_state:
+    st.session_state["bo_family"] = _qp.get("family", "barrier_simple")
+if "sel" not in st.session_state:
+    st.session_state["sel"] = _qp.get("strategy", "Long Straddle")
+
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["Pricer & Grecques", "Stratégies", " Stratégies Customs", "Produits structurés", "Glossaire"])
 
 # ═══════════════════════════════════════════════════════════
@@ -1350,18 +1367,17 @@ with tab2:
                            key="q2",help="Rendement du dividende annuel continu (%)") / 100
     pm1,pm2=st.columns(2)
     with pm1:
-        field_label("Maturité Calls  (A / M / J)"); Tc2=mat_inline("s2c",1,0,0)
+        field_label("Maturité Calls  (A / M / J)"); Tc2=mat_inline("s2c",0,1,15)
         sig_c2=st.slider("Vol. Calls \u03c3 (%)",1.0,100.0,20.0,0.5,key="sc2",
                          help="Volatilité implicite utilisé pour pricer les calls") / 100
     with pm2:
-        field_label("Maturité Puts  (A / M / J)"); Tp2=mat_inline("s2p",1,0,0)
+        field_label("Maturité Puts  (A / M / J)"); Tp2=mat_inline("s2p",0,1,15)
         sig_p2=st.slider("Vol. Puts \u03c3 (%)",1.0,100.0,20.0,0.5,key="sp2",
                          help="Volatilité implicite utilisé pour pricer les puts") / 100
 
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
     section_header("Choisir une stratégie prédéfinie")
 
-    if "sel" not in st.session_state: st.session_state.sel="Long Straddle"
     snames=list(STRATEGIES.keys())
     for row in [snames[i:i+3] for i in range(0,len(snames),3)]:
         cols=st.columns(3)
@@ -1374,6 +1390,7 @@ with tab2:
                 if st.button("Sélectionner",key=f"s2_{name}"):
                     st.session_state.sel=name
                     st.session_state["t_pct_2"] = 100  # reset curseur temporel à chaque changement de stratégie
+                    st.query_params["strategy"] = name
                     st.rerun()
 
     st.markdown("---")
@@ -1389,9 +1406,9 @@ with tab2:
         st.markdown(f'<div class="card" style="height:100%"><div class="ct">Payoff</div>'
                     f'<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 10px;'
                     f'font-size:.73rem;line-height:1.8;color:#d4d4d8;align-items:baseline">'
-                    f'<span>\U0001f4c8 <b>Gain max</b></span><span>{info["max_gain"]}</span>'
-                    f'<span>\U0001f4c9 <b>Perte max</b></span><span>{info["max_loss"]}</span>'
-                    f'<span>\u2696\ufe0f <b>Seuil</b></span><span>{info["be"]}</span>'
+                    f'<span><b>Gain max</b></span><span>{info["max_gain"]}</span>'
+                    f'<span><b>Perte max</b></span><span>{info["max_loss"]}</span>'
+                    f'<span><b>Seuil</b></span><span>{info["be"]}</span>'
                     f'</div></div>', unsafe_allow_html=True)
     with detail_col3:
         tips = []
@@ -1497,20 +1514,20 @@ with tab3:
                 ) or "aucune jambe active"
                 st.markdown(f'<div style="font-size:.72rem;color:var(--t2);background:var(--s1);'
                            f'border:1px solid var(--b1);border-radius:8px;padding:8px 12px;margin:6px 0">'
-                           f'\U0001f4c4 <b>Aperçu</b> \u2014 "{html.escape(str(_preview.get("name","(sans nom)")))}" : '
+                           f'<b>Aperçu</b> \u2014 "{html.escape(str(_preview.get("name","(sans nom)")))}" : '
                            f'{_preview_active} jambe(s) active(s) sur {_preview.get("n_legs","?")} configurée(s)<br>'
                            f'<span style="color:var(--t3)">{html.escape(_preview_details)}</span></div>',
                            unsafe_allow_html=True)
                 _preview_ok = True
             except Exception as _pe:
-                st.error(f"\u26a0\ufe0f Ce fichier ne semble pas être un JSON valide exporté par cette application : {_pe}")
+                st.error(f"Ce fichier ne semble pas être un JSON valide exporté par cette application : {_pe}")
                 _preview_ok = False
 
             if _preview_ok:
                 _n_active_legs_now = sum(1 for i in range(6) if st.session_state.get(f"la_{i}", False))
                 if _n_active_legs_now > 0:
-                    st.caption(f"\u26a0\ufe0f Ceci remplacera vos {_n_active_legs_now} jambe(s) actuellement active(s).")
-                if st.button("\u2b06\ufe0f Charger cette configuration", key="import_strat_btn", use_container_width=True):
+                    st.caption(f"Ceci remplacera vos {_n_active_legs_now} jambe(s) actuellement active(s).")
+                if st.button("Charger cette configuration", key="import_strat_btn", use_container_width=True):
                     try:
                         _payload = _preview
                         _legs_in = _payload.get("legs", [])
@@ -1564,7 +1581,7 @@ with tab3:
     if tpl_sel != "- Personnalisé -":
         tpl = BUILDER_TEMPLATES[tpl_sel]
         _synth_note = BUILDER_SYNTHETIC_NOTE.get(tpl_sel, "")
-        _synth_html = f' <br>\u2139\ufe0f {_synth_note}' if _synth_note else ""
+        _synth_html = f' <br><b>Note :</b> {_synth_note}' if _synth_note else ""
         st.markdown(f'<div class="tpl-info">Ce template va configurer <b>{tpl["n"]} jambe(s)</b> '
                     f'basés sur le strike K = {st.session_state.get("shared_K",100.0):.1f} \u20ac{_synth_html}</div>',
                     unsafe_allow_html=True)
@@ -1601,12 +1618,12 @@ with tab3:
 
         if st.session_state.get("_confirm_apply_tpl") == tpl_sel:
             _frozen_n = st.session_state.get("_confirm_apply_tpl_n", _n_active_legs)
-            st.warning(f"\u26a0\ufe0f Ceci va **remplacer** vos {_frozen_n} jambe(s) actuellement active(s) "
+            st.warning(f"Ceci va **remplacer** vos {_frozen_n} jambe(s) actuellement active(s) "
                       f"par le template \"{tpl_sel}\". Pensez à exporter votre configuration actuelle "
                       f"(panneau ci-dessus) si vous voulez la retrouver plus tard. Confirmer ?")
             cc1, cc2 = st.columns(2)
             with cc1:
-                if st.button("\u2705 Confirmer et remplacer", key="confirm_apply_tpl_btn", use_container_width=True):
+                if st.button("Confirmer et remplacer", key="confirm_apply_tpl_btn", use_container_width=True):
                     st.session_state.pop("_confirm_apply_tpl_n", None)
                     _apply_template()
             with cc2:
@@ -1663,12 +1680,12 @@ with tab3:
     st.markdown("---")
 
     DFLTS=[
-        dict(active=True, dir=1, inst="call",S=100.,K=100.,r=.05,sigma=.20,qty=1,y=1,m=0,d=0),
-        dict(active=True, dir=-1,inst="call",S=100.,K=105.,r=.05,sigma=.20,qty=1,y=1,m=0,d=0),
-        dict(active=False,dir=1, inst="put", S=100.,K=95., r=.05,sigma=.22,qty=1,y=1,m=0,d=0),
-        dict(active=False,dir=-1,inst="put", S=100.,K=90., r=.05,sigma=.22,qty=1,y=1,m=0,d=0),
-        dict(active=False,dir=1, inst="call",S=100.,K=110.,r=.05,sigma=.20,qty=1,y=1,m=0,d=0),
-        dict(active=False,dir=-1,inst="put", S=100.,K=85., r=.05,sigma=.24,qty=1,y=1,m=0,d=0),
+        dict(active=True, dir=1, inst="call",S=100.,K=100.,r=.05,sigma=.20,qty=1,y=0,m=1,d=15),
+        dict(active=True, dir=-1,inst="call",S=100.,K=105.,r=.05,sigma=.20,qty=1,y=0,m=1,d=15),
+        dict(active=False,dir=1, inst="put", S=100.,K=95., r=.05,sigma=.22,qty=1,y=0,m=1,d=15),
+        dict(active=False,dir=-1,inst="put", S=100.,K=90., r=.05,sigma=.22,qty=1,y=0,m=1,d=15),
+        dict(active=False,dir=1, inst="call",S=100.,K=110.,r=.05,sigma=.20,qty=1,y=0,m=1,d=15),
+        dict(active=False,dir=-1,inst="put", S=100.,K=85., r=.05,sigma=.24,qty=1,y=0,m=1,d=15),
     ]
     LNAMES=["Jambe A","Jambe B","Jambe C","Jambe D","Jambe E","Jambe F"]
 
@@ -2035,7 +2052,7 @@ with tab5:
         "sur une option knock-out (qui, sans rebate, ne vaut alors plus rien). "
         "Réduit la perte totale liée au déclenchement de la barrière, moyennant une prime légèrement plus élevée.",
         "#eab308", "234,179,8")
-    cards4 += gls_card("\U0001f4c8", "Monitoring Continu", "Hypothèse de calcul",
+    cards4 += gls_card("MC", "Monitoring Continu", "Hypothèse de calcul",
         "Hypothèse selon laquelle le franchissement de la barrière est surveillé <b>en continu</b> "
         "(à chaque instant), et non à des dates fixes (monitoring discret, ex. fixing quotidien en clôture). "
         "C'est l'hypothèse retenue par la formule fermée de Reiner-Rubinstein utilisée dans cet onglet - "
@@ -2049,7 +2066,7 @@ with tab5:
         "des vendeurs de produits à barrière : la position peut devenir très difficile à delta-hedger "
         "juste avant un déclenchement.",
         "#ef4444", "239,68,68")
-    cards4 += gls_card("\U0001f501", "Autocall / Phoenix", "Note à rappel automatique",
+    cards4 += gls_card("AC", "Autocall / Phoenix", "Note à rappel automatique",
         "Produit structuré <b>path-dependent</b> observé à des dates fixes (trimestrielles, semestrielles...). "
         "Si le spot dépasse la <b>barrière de rappel</b> à une date d'observation, la note rembourse 100% du "
         "nominal et s'arrête. Un <b>Phoenix</b> est un autocall dont la barrière de coupon est distincte (et "
@@ -2069,33 +2086,33 @@ with tab5:
         "suit typiquement le sous-jacent au prorata (participation 1:1), comme un <b>Put Down-and-In</b> "
         "européen sur cette seule date.",
         "#f59e0b", "245,158,11")
-    cards4 += gls_card("\U0001f4b0", "Reverse Convertible", "Obligation + vente de put",
+    cards4 += gls_card("RC", "Reverse Convertible", "Obligation + vente de put",
         "Note qui verse un coupon fixe élevé, financé par la <b>vente d'un put</b> sur le sous-jacent : si le "
         "sous-jacent termine sous le strike K, le capital remboursé est réduit au prorata de la baisse "
         "(participation 1:1). C'est le produit structuré retail le plus répandu en Europe. Une <b>Barrier "
         "Reverse Convertible (BRC)</b> conditionne cette perte à un franchissement préalable d'une barrière "
         "H &lt; K (put down-and-in) : le capital reste protégé si H n'est jamais touchée.",
         "#f472b6", "244,114,182")
-    cards4 += gls_card("\U0001f381", "Bonus Certificate", "Tracker avec plancher conditionnel",
+    cards4 += gls_card("BC", "Bonus Certificate", "Tracker avec plancher conditionnel",
         "Réplique un tracker (participation 1:1 au sous-jacent) et garantit en plus un remboursement minimum "
         "(le <b>bonus</b> B \u2265 S\u2080) à l'échéance, <b>tant qu'une barrière basse H n'a jamais été "
         "touchée</b> en cours de vie. Se réplique par Tracker + Put(B) Down-and-Out(H) : si la barrière est "
         "franchie, le plancher disparaît et le certificat redevient un simple tracker.",
         "#22c55e", "34,197,94")
-    cards4 += gls_card("\U0001f680", "Certificat Outperformance", "Participation amplifiée à la hausse",
+    cards4 += gls_card("OP", "Certificat Outperformance", "Participation amplifiée à la hausse",
         "Tracker (participation 1:1 des deux côtés) auquel s'ajoute une participation <b>supérieure à 100%</b> "
         "à la hausse au-delà d'un strike K, financée par le coût plus faible d'un call que d'une position "
         "actions équivalente. Se réplique par Tracker + (Participation\u22121) \u00d7 Call(K). Une variante "
         "<b>capée</b> plafonne le gain maximal (vente d'un call à strike K\u2082 &gt; K) pour réduire le coût.",
         "#c084fc", "192,132,252")
-    cards4 += gls_card("\u26aa", "Option Digitale (Binaire)", "Payoff tout ou rien",
+    cards4 += gls_card("0/1", "Option Digitale (Binaire)", "Payoff tout ou rien",
         "Option dont le payoff à l'échéance ne dépend que du <b>franchissement</b> d'un strike, pas de "
         "l'ampleur du mouvement : une <b>cash-or-nothing</b> paie un montant fixe Q si la condition est "
         "remplie (zéro sinon), une <b>asset-or-nothing</b> paie le sous-jacent lui-même. Une option vanille "
         "se réplique exactement comme Asset-or-Nothing \u2212 K \u00d7 Cash-or-Nothing(Q=1). Delta et Gamma "
         "explosent au voisinage du strike quand l'échéance approche (payoff discontinu).",
         "#eab308", "234,179,8")
-    cards4 += gls_card("\U0001f4c8", "Tracker / Forward Synthétique", "Brique de réplication",
+    cards4 += gls_card("FWD", "Tracker / Forward Synthétique", "Brique de réplication",
         "Position qui réplique la performance 1:1 du sous-jacent sans le détenir physiquement, utilisée comme "
         "brique de base des certificats Bonus et Outperformance. Sa valeur actualisée est S\u00b7e<sup>\u2212qT</sup> "
         "(pour 1 unité de sous-jacent) : le rendement du dividende q réduit sa valeur, car le détenteur du "
@@ -2125,17 +2142,15 @@ with tab4:
                                                   "outperformance": "Outperformance",
                                                   "digital": "Options Digitales"}[x],
                            label_visibility="collapsed")
+    st.query_params["family"] = prod_family
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
     if prod_family == "barrier_simple":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
                     '\U0001f988 <b>Shark Note</b> - produit structuré combinant une option '
                     'vanille avec une <b>barrière</b> : si le sous-jacent touche le niveau H avant l\'échéance, l\'option '
-                    'est désactivée (<b>knock-out</b>) ou au contraire activée (<b>knock-in</b>). Les briques classiques du '
-                    'shark note sont le <b>Call Up-and-Out</b> et le <b>Put Down-and-Out</b>, mais les <b>8 combinaisons</b> '
-                    'standard (Call/Put \u00d7 barrière Up/Down \u00d7 Out/In) sont modélisées ci-dessous. '
-                    'Formule fermée de Reiner-Rubinstein, validée par simulation Monte-Carlo '
-                    '(pont brownien, écarts &lt;1.5% - et identité in+out=vanille vérifiée exactement).</div>',
+                    'est désactivée (<b>knock-out</b>) ou au contraire activée (<b>knock-in</b>). Les <b>8 combinaisons</b> '
+                    'standard (Call/Put \u00d7 barrière Up/Down \u00d7 Out/In) sont modélisées ci-dessous.</div>',
                     unsafe_allow_html=True)
 
         section_header("Choisir le produit")
@@ -2200,12 +2215,11 @@ with tab4:
         sigb = st.slider("sigb", 1.0, 150.0, 25.0, 0.5, key="bo_sigma", label_visibility="collapsed") / 100
 
         discrete_monitor = st.checkbox(
-            "Monitoring discret (quotidien) — correction de continuité",
+            "Monitoring discret (quotidien)",
             value=False, key="bo_discrete",
-            help="La formule de Reiner-Rubinstein suppose un monitoring CONTINU de la barrière. En pratique "
-                 "(fixing quotidien à la clôture), la barrière est moins souvent touchée. Correction de Broadie-"
-                 "Glasserman-Kou (1997) : on décale H d'un facteur exp(\u00b10.5826\u00b7\u03c3\u00b7\u221a(T/n)) "
-                 "(n = nb de jours de bourse jusqu'à l'échéance) pour approximer le prix discret avec la formule continue.")
+            help="La formule utilisée suppose un monitoring continu de la barrière. En pratique (fixing "
+                 "quotidien), la barrière est un peu moins souvent touchée : cette option corrige le prix "
+                 "en conséquence. Détails dans le glossaire (\u00ab Monitoring Continu \u00bb).")
 
         invalid = (b_dir == "up" and Hb <= Sb) or (b_dir == "down" and Hb >= Sb)
         if invalid:
@@ -2240,7 +2254,7 @@ with tab4:
                     <div class="ph-row"><span class="ph-val">{price:.4f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
                     <div class="ph-sub">
                       <span>Vanille \u00e9quiv. = \u20ac{vanilla_ref:.4f}</span><span>{'Réduction' if reduction>=0 else 'Surcote'} = {reduction:+.1f}%</span>
-                      <span>H = {Hb:.1f}{f' (H eff. monitoring discret = {Hb_calc:.2f}, n={n_obs}j)' if discrete_monitor else ''}</span><span>Rebate = \u20ac{Rb:.2f}</span>
+                      <span>H = {Hb:.1f}{f' (H eff. = {Hb_calc:.2f})' if discrete_monitor else ''}</span><span>Rebate = \u20ac{Rb:.2f}</span>
                     </div>
                   </div>
                   <span class="ph-badge {badge_class}">{badge_text}</span>
@@ -2308,7 +2322,7 @@ with tab4:
                title="\u0393 Gamma selon le spot - pic près de H", responsive=True)
 
             svg_bo4 = svg_chart([
-                {"x":list(sigRb*100),"y":list(vanilla_vs_vol),"color":"#52525b","width":1,"dash":True,"label":"Vanille équiv."},
+                {"x":list(sigRb*100),"y":list(vanilla_vs_vol),"color":"#3f3f46","width":1.6,"dash":True,"label":"Vanille équiv."},
                 {"x":list(sigRb*100),"y":list(price_vs_vol),"color":acc,"width":2.2,"fill":True,"fill_color":acc,"label":"Prix barrière"},
             ], W=680, H=260, xlabel="Volatilité implicite (%)", ylabel="Prix (\u20ac)",
                vlines=[{"x":sigb*100,"color":"#f59e0b","label":f"\u03c3={sigb*100:.1f}%","dash":True}],
@@ -2339,7 +2353,7 @@ with tab4:
 
     elif prod_family == "twin_win":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001f501 <b>Twin Win</b> - l\'investisseur gagne <b>que le sous-jacent monte ou baisse</b>, '
+                    '<b>Twin Win</b> - l\'investisseur gagne <b>que le sous-jacent monte ou baisse</b>, '
                     'tant qu\'une barrière n\'est pas touchée : la performance absolue est payée dans les deux sens. '
                     'Si la barrière est franchie, le "gain sur la baisse" (ou sur la hausse, selon la barrière) disparaît - '
                     'le capital reste protégé, mais on perd la composante "twin". Réplication : Zéro-coupon + Call(K=S\u2080) '
@@ -2384,7 +2398,7 @@ with tab4:
         twp5, twp6, twp7 = st.columns(3)
         with twp5:
             field_label("Maturité (A / M / J)")
-            Ttw = mat_inline("tw_t", 1, 0, 0)
+            Ttw = mat_inline("tw_t", 0, 1, 15)
         with twp6:
             rtw = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="tw_r") / 100
         with twp7:
@@ -2477,7 +2491,7 @@ with tab4:
             if tw_high_active: vlines_tw.append({"x":H_high,"color":"#ef4444","label":f"H\u2095={H_high:.0f}","dash":True})
 
             svg_tw1 = svg_chart([
-                {"x":list(SRtw),"y":list(payoff_no_breach),"color":"#52525b","width":1,"dash":True,"label":"Si jamais déclenché (référence)"},
+                {"x":list(SRtw),"y":list(payoff_no_breach),"color":"#3f3f46","width":1.6,"dash":True,"label":"Si jamais déclenché (référence)"},
                 {"x":list(SRtw),"y":list(price_curve_tw),"color":"#c084fc","width":2.2,"fill":True,"fill_color":"#c084fc","label":"Prix actuel de la note"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
                vlines=vlines_tw, show_dot={"x":Stw,"y":price_tw,"color":"#c084fc","label":f"\u20ac{price_tw:.3f}"},
@@ -2514,7 +2528,7 @@ with tab4:
 
     elif prod_family == "airbag":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001fa82 <b>Airbag</b> ou <i>Cushion Note</i> : participation à la hausse au-delà de S\u2080, capital '
+                    '<b>Airbag</b> ou <i>Cushion Note</i> : participation à la hausse au-delà de S\u2080, capital '
                     'protégé dans une <b>zone tampon</b> entre le buffer B et S\u2080, puis <b>perte accélérée (gearing)</b> '
                     'en-dessous de B. Souvent présenté comme un produit delta one, mais c\'est en réalité une '
                     '<b>combinaison d\'options vanille</b> : Zéro-coupon + Call(K=S\u2080) \u2212 Gearing\u00d7Put(K=B). '
@@ -2621,7 +2635,7 @@ with tab4:
                         {"x":Bab,"color":"#ef4444","label":f"B={Bab:.0f}","dash":True}]
 
             svg_ab1 = svg_chart([
-                {"x":list(SRab),"y":list(payoff_maturity_ab),"color":"#52525b","width":1,"dash":True,"label":"Payoff à maturité"},
+                {"x":list(SRab),"y":list(payoff_maturity_ab),"color":"#3f3f46","width":1.6,"dash":True,"label":"Payoff à maturité"},
                 {"x":list(SRab),"y":list(price_curve_ab),"color":"#c084fc","width":2.2,"fill":True,"fill_color":"#c084fc","label":"Prix actuel de la note"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
                vlines=vlines_ab, show_dot={"x":Sab,"y":price_ab,"color":"#c084fc","label":f"\u20ac{price_ab:.3f}"},
@@ -2656,7 +2670,7 @@ with tab4:
 
     elif prod_family == "autocall":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001f501 <b>Autocall / Phoenix</b> - note à rappel automatique : à chaque date d\'observation, '
+                    '<b>Autocall / Phoenix</b> - note à rappel automatique : à chaque date d\'observation, '
                     'si le sous-jacent est au-dessus de la <b>barrière de rappel</b>, la note rembourse 100% du '
                     'nominal (+ coupon du jour) et cesse d\'exister. S\'il est seulement au-dessus de la '
                     '<b>barrière de coupon</b> (souvent plus basse - structure "Phoenix"), un coupon est versé sans '
@@ -2793,7 +2807,7 @@ with tab4:
         payoff_never_called_ac = np.where(SRac >= S_ac*protect_pct, 100.0, 100.0*SRac/S_ac)
 
         svg_ac1 = svg_chart([
-            {"x":list(SRac),"y":list(payoff_never_called_ac),"color":"#52525b","width":1,"dash":True,
+            {"x":list(SRac),"y":list(payoff_never_called_ac),"color":"#3f3f46","width":1.6,"dash":True,
              "label":"Si jamais rappelée (référence à maturité)"},
             {"x":list(SRac),"y":list(price_curve_ac),"color":"#c084fc","width":2.2,"fill":True,"fill_color":"#c084fc",
              "label":"Prix actuel de la note (Monte-Carlo)"},
@@ -2818,7 +2832,7 @@ with tab4:
     # ═══════════════════ REVERSE CONVERTIBLE / BRC ═══════════════════
     elif prod_family == "reverse_convertible":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001f4b0 <b>Reverse Convertible</b> - obligation à coupon élevé combinée à la vente d\'un '
+                    '<b>Reverse Convertible</b> - obligation à coupon élevé combinée à la vente d\'un '
                     '<b>put</b> sur le sous-jacent : l\'investisseur reçoit un coupon fixe quoi qu\'il arrive, mais '
                     'si le sous-jacent termine sous le strike K, le remboursement du capital est réduit au prorata '
                     'de la baisse (participation 1:1, comme s\'il avait vendu un put nu). La variante '
@@ -2842,7 +2856,7 @@ with tab4:
         rc5, rc6, rc7 = st.columns(3)
         with rc5:
             field_label("Maturité (A / M / J)")
-            Trc = mat_inline("rc_t", 1, 0, 0)
+            Trc = mat_inline("rc_t", 0, 1, 15)
         with rc6:
             field_label("Volatilité \u03c3 (%)")
             sigrc = st.slider("sigrc", 1.0, 150.0, 25.0, 0.5, key="rc_sigma", label_visibility="collapsed") / 100
@@ -2850,8 +2864,10 @@ with tab4:
             coupon_rc = st.slider("Coupon annualisé (%)", 0.0, 30.0, 8.0, 0.25, key="rc_coupon",
                                   help="Coupon fixe versé quoi qu'il arrive, en % annuel du nominal") / 100
 
-        barrier_on_rc = st.checkbox("Barrier Reverse Convertible (BRC) - ajouter une barrière de protection",
-                                    value=True, key="rc_barrier_on")
+        rc_type = st.radio("Type de produit", ["rc", "brc"], horizontal=True, key="rc_type",
+                           format_func=lambda x: "Reverse Convertible (sans barrière)" if x == "rc"
+                                                 else "Barrier Reverse Convertible (avec barrière)")
+        barrier_on_rc = (rc_type == "brc")
         Hrc = Krc * 0.7
         if barrier_on_rc:
             Hrc = st.slider("Barrière de protection H (% du strike K)", 50, 99, 70, 1, key="rc_h") / 100 * Krc
@@ -2921,7 +2937,7 @@ with tab4:
             if barrier_on_rc: vlines_rc.append({"x":Hrc,"color":"#ef4444","label":f"H={Hrc:.0f}","dash":True})
 
             svg_rc1 = svg_chart([
-                {"x":list(SRrc),"y":list(payoff_maturity_rc),"color":"#52525b","width":1,"dash":True,"label":"Remboursement à maturité (référence)"},
+                {"x":list(SRrc),"y":list(payoff_maturity_rc),"color":"#3f3f46","width":1.6,"dash":True,"label":"Remboursement à maturité (référence)"},
                 {"x":list(SRrc),"y":list(price_curve_rc),"color":"#f59e0b","width":2.2,"fill":True,"fill_color":"#f59e0b","label":"Prix actuel"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
                vlines=vlines_rc, show_dot={"x":Src,"y":price_rc,"color":"#f59e0b","label":f"\u20ac{price_rc:.3f}"},
@@ -2946,7 +2962,7 @@ with tab4:
     # ═══════════════════ BONUS CERTIFICATE ═══════════════════
     elif prod_family == "bonus":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001f381 <b>Bonus Certificate</b> - participation 1:1 au sous-jacent (comme un tracker), '
+                    '<b>Bonus Certificate</b> - participation 1:1 au sous-jacent (comme un tracker), '
                     'avec un plancher <b>bonus</b> B \u2265 S\u2080 garanti à l\'échéance <b>tant que la barrière '
                     'basse H n\'a jamais été touchée</b> en cours de vie. Si la barrière est touchée, le '
                     'certificat perd son plancher et se comporte comme un simple tracker jusqu\'à l\'échéance. '
@@ -2964,7 +2980,7 @@ with tab4:
             Hbn = st.slider("Barrière H (% S\u2080)", 20, 99, 70, 1, key="bn_h") / 100 * Sbn
         with bn4:
             field_label("Maturité (A / M / J)")
-            Tbn = mat_inline("bn_t", 1, 0, 0)
+            Tbn = mat_inline("bn_t", 0, 1, 15)
 
         bn5, bn6, bn7 = st.columns(3)
         with bn5:
@@ -3034,7 +3050,7 @@ with tab4:
                         {"x":Hbn,"color":"#ef4444","label":f"H={Hbn:.0f}","dash":True}]
 
             svg_bn1 = svg_chart([
-                {"x":list(SRbn),"y":list(payoff_maturity_bn),"color":"#52525b","width":1,"dash":True,"label":"Payoff à maturité (si barrière jamais touchée)"},
+                {"x":list(SRbn),"y":list(payoff_maturity_bn),"color":"#3f3f46","width":1.6,"dash":True,"label":"Payoff à maturité (si barrière jamais touchée)"},
                 {"x":list(SRbn),"y":list(price_curve_bn),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"Prix actuel"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
                vlines=vlines_bn, show_dot={"x":Sbn,"y":price_bn,"color":"#22c55e","label":f"\u20ac{price_bn:.3f}"},
@@ -3059,7 +3075,7 @@ with tab4:
     # ═══════════════════ OUTPERFORMANCE / LEVIER ═══════════════════
     elif prod_family == "outperformance":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001f680 <b>Certificat Outperformance</b> - participation 1:1 au sous-jacent à la baisse '
+                    '<b>Certificat Outperformance</b> - participation 1:1 au sous-jacent à la baisse '
                     '(tracker), mais participation <b>amplifiée</b> (&gt;100%) à la hausse au-delà du strike K. '
                     'Réplication : Tracker + (Participation \u2212 1) \u00d7 <b>Call(K)</b>. Un <b>cap</b> optionnel '
                     'plafonne le gain maximal en finançant le surcoût par la vente d\'un call à un strike '
@@ -3077,7 +3093,7 @@ with tab4:
                                 help="Taux de participation à la hausse au-delà de K (150% = 1.5x)") / 100
         with op4:
             field_label("Maturité (A / M / J)")
-            Top = mat_inline("op_t", 1, 0, 0)
+            Top = mat_inline("op_t", 0, 1, 15)
 
         op5, op6, op7 = st.columns(3)
         with op5:
@@ -3153,7 +3169,7 @@ with tab4:
             if cap_on: vlines_op.append({"x":Kop2,"color":"#ef4444","label":f"K\u2082={Kop2:.0f}","dash":True})
 
             svg_op1 = svg_chart([
-                {"x":list(SRop),"y":list(payoff_maturity_op),"color":"#52525b","width":1,"dash":True,"label":"Payoff à maturité"},
+                {"x":list(SRop),"y":list(payoff_maturity_op),"color":"#3f3f46","width":1.6,"dash":True,"label":"Payoff à maturité"},
                 {"x":list(SRop),"y":list(price_curve_op),"color":"#c084fc","width":2.2,"fill":True,"fill_color":"#c084fc","label":"Prix actuel"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
                vlines=vlines_op, show_dot={"x":Sop,"y":price_op,"color":"#c084fc","label":f"\u20ac{price_op:.3f}"},
@@ -3178,7 +3194,7 @@ with tab4:
     # ═══════════════════ OPTIONS DIGITALES ═══════════════════
     elif prod_family == "digital":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
-                    '\U0001f3af <b>Options Digitales (binaires)</b> - payoff \u00ab tout ou rien \u00bb à '
+                    '<b>Options Digitales (binaires)</b> - payoff \u00ab tout ou rien \u00bb à '
                     'l\'échéance. Une <b>cash-or-nothing</b> paie un montant fixe Q si la condition est remplie '
                     '(S<sub>T</sub>&gt;K pour un call, S<sub>T</sub>&lt;K pour un put), zéro sinon. Une '
                     '<b>asset-or-nothing</b> paie S<sub>T</sub> lui-même (pas un montant fixe) si la condition '
@@ -3202,7 +3218,7 @@ with tab4:
         dg5, dg6, dg7, dg8 = st.columns(4)
         with dg5:
             field_label("Maturité (A / M / J)")
-            Tdg = mat_inline("dg_t", 0, 3, 0)
+            Tdg = mat_inline("dg_t", 0, 1, 15)
         with dg6:
             r_dg = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="dg_r") / 100
         with dg7:
@@ -3259,7 +3275,7 @@ with tab4:
         acc_dg = "#06b6d4" if otype_dg == "call" else "#f472b6"
 
         svg_dg1 = svg_chart([
-            {"x":list(SRdg),"y":list(payoff_maturity_dg),"color":"#52525b","width":1,"dash":True,"label":"Payoff à maturité"},
+            {"x":list(SRdg),"y":list(payoff_maturity_dg),"color":"#3f3f46","width":1.6,"dash":True,"label":"Payoff à maturité"},
             {"x":list(SRdg),"y":list(price_curve_dg),"color":acc_dg,"width":2.2,"fill":True,"fill_color":acc_dg,"label":"Prix actuel"},
         ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac)",
            vlines=vlines_dg, show_dot={"x":Sdg,"y":price_dg,"color":acc_dg,"label":f"\u20ac{price_dg:.4f}"},
@@ -3582,6 +3598,13 @@ div[class*="st-key-fs_"] button span{
 }
 div[class*="st-key-fs_"] button svg{
   width:13px; height:13px; margin:0 !important; color:var(--t2);
+}
+/* La modale "Vue plein écran" (st.dialog width="large") est par défaut plus étroite que la
+   largeur déjà occupée par un graphique en pleine largeur hors modale (ex. onglet Produits
+   Structurés quand un seul graphique occupe toute la ligne) : on l'élargit explicitement. */
+div[data-testid="stDialog"] div[role="dialog"]{
+  width:min(96vw, 1400px) !important;
+  max-width:96vw !important;
 }
 </style>
 """, unsafe_allow_html=True)
