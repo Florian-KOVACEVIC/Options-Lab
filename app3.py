@@ -146,6 +146,132 @@ def barrier_greeks(S, K, H, T, r, sigma, q=0.0, otype="call", barrier_dir="up", 
     return dict(delta=delta, gamma=gamma, theta=theta, vega=vega, rho=rho)
 
 
+# ─────────────────────────────────────────────────────────────
+#  OPTIONS DIGITALES (BINAIRES) — formule fermée
+# ─────────────────────────────────────────────────────────────
+def digital_price(S, K, T, r, sigma, q=0.0, otype="call", style="cash", Q=100.0):
+    """Prix d'une option digitale (binaire), formule fermée.
+    - style='cash'  : cash-or-nothing - paie un montant fixe Q si S_T>K (call) ou S_T<K (put)
+    - style='asset' : asset-or-nothing - paie S_T (au lieu d'un montant fixe) si la condition est remplie
+    """
+    otype = str(otype).strip().lower(); style = str(style).strip().lower()
+    if T <= 1e-9 or sigma <= 1e-9:
+        hit = (S > K) if otype == "call" else (S < K)
+        if style == "cash": return Q if hit else 0.0
+        return S if hit else 0.0
+    d1 = (np.log(S/K)+(r-q+0.5*sigma**2)*T)/(sigma*np.sqrt(T)); d2 = d1-sigma*np.sqrt(T)
+    sign = 1 if otype == "call" else -1
+    if style == "cash":
+        return Q*np.exp(-r*T)*norm.cdf(sign*d2)
+    return S*np.exp(-q*T)*norm.cdf(sign*d1)
+
+def digital_greeks(S, K, T, r, sigma, q=0.0, otype="call", style="cash", Q=100.0):
+    """Grecques par différences finies. Delta/Gamma sont très marqués près de K (surtout quand T est
+    petit) : comportement caractéristique et attendu des options digitales - le payoff étant discontinu
+    au strike, la couverture y devient extrêmement délicate à l'approche de l'échéance."""
+    if T <= 1e-9 or sigma <= 1e-9:
+        return dict(delta=0.0, gamma=0.0, theta=0.0, vega=0.0, rho=0.0)
+    f = lambda s, t, vol, rr: digital_price(s, K, t, rr, vol, q, otype, style, Q)
+    hS = max(S*0.0025, 1e-3); hV = 0.0025; hT = 1/365; hR = 0.0005
+    p0 = f(S, T, sigma, r)
+    delta = (f(S+hS,T,sigma,r) - f(S-hS,T,sigma,r)) / (2*hS)
+    gamma = (f(S+hS,T,sigma,r) - 2*p0 + f(S-hS,T,sigma,r)) / (hS**2)
+    vega  = (f(S,T,sigma+hV,r) - f(S,T,sigma-hV,r)) / (2*hV) / 100
+    theta = f(S, max(T-hT,1e-6), sigma, r) - p0
+    rho   = (f(S,T,sigma,r+hR) - f(S,T,sigma,r-hR)) / (2*hR) / 100
+    return dict(delta=delta, gamma=gamma, theta=theta, vega=vega, rho=rho)
+#  Produit path-dependent : rappel et coupon observés à des dates fixes -> pas de formule
+#  fermée, la simulation Monte-Carlo est l'approche standard des desks de produits structurés.
+#  Nombres aléatoires communs (même graine -> mêmes tirages Z) entre appels voisins pour
+#  obtenir des sensibilités (Delta/Vega, courbe de prix vs spot) lisses malgré le bruit MC.
+# ─────────────────────────────────────────────────────────────
+def _autocall_paths(S0, T, n_obs, r, q, sigma, n_paths=20000, seed=42):
+    """Simule le spot aux n_obs dates d'observation (mouvement brownien géométrique exact,
+    tirage direct à chaque date - pas besoin de granularité quotidienne pour ce produit)."""
+    rng = np.random.default_rng(seed)
+    dt = T / n_obs
+    Z = rng.standard_normal((n_paths, n_obs))
+    drift = (r - q - 0.5*sigma*sigma) * dt
+    diffusion = sigma*np.sqrt(dt)*Z
+    log_S = np.log(S0) + np.cumsum(drift + diffusion, axis=1)
+    return np.exp(log_S)
+
+@st.cache_data(show_spinner=False)
+def autocall_price(S, S_ref, T, n_obs, r, q, sigma, autocall_pct, coupon_pct, protect_pct,
+                    coupon_rate, step_down_pct=0.0, memory=True, n_paths=20000, seed=42):
+    """Prix Monte-Carlo (pour 100\u20ac de nominal) d'une note Autocall / Phoenix à mémoire de coupon.
+    - S            : spot COURANT, point de départ de la simulation (permet de repricer la note déjà émise)
+    - S_ref        : spot de RÉFÉRENCE à l'émission - fixe les barrières en absolu (S_ref \u00d7 %) et sert de
+                     base à la participation au capital. Contrairement à S, S_ref ne bouge pas quand on
+                     reprice la note à un spot courant différent (mêmes conventions que Twin Win / Airbag).
+    - autocall_pct : barrière de rappel automatique, en fraction de S_ref (ex 1.0 = 100%)
+    - coupon_pct   : barrière de coupon, en fraction de S_ref (souvent \u2264 autocall_pct -> structure "Phoenix")
+    - protect_pct  : barrière de protection du capital, observée SEULEMENT à l'échéance finale
+    - coupon_rate  : coupon versé par période si la barrière de coupon est franchie (en % du nominal, ex 2.0)
+    - step_down_pct: recul de la barrière de rappel à chaque période (fraction de S_ref, 0 = barrière constante)
+    - memory       : effet mémoire (coupon manqué rattrapé à la prochaine date où la barrière est franchie)
+    Retourne (prix, erreur_std_MC, proba_rappel_par_date[n_obs], proba_perte_capital, vie_moyenne_annees).
+    """
+    S_paths = _autocall_paths(S, T, n_obs, r, q, sigma, n_paths, seed)
+    dt = T / n_obs
+    times = np.arange(1, n_obs+1) * dt
+
+    active = np.ones(n_paths, dtype=bool)
+    memory_missed = np.zeros(n_paths)
+    pv = np.zeros(n_paths)
+    life = np.full(n_paths, T)
+    called_at = np.full(n_paths, -1, dtype=int)
+
+    for i in range(n_obs):
+        St = S_paths[:, i]
+        disc = np.exp(-r*times[i])
+        ac_barrier = S_ref * max(autocall_pct - step_down_pct*i, 0.0)
+        cp_barrier = S_ref * coupon_pct
+
+        coupon_hit = active & (St >= cp_barrier)
+        if memory:
+            n_due = memory_missed + 1.0
+            coupon_paid = np.where(coupon_hit, n_due*coupon_rate, 0.0)
+            memory_missed = np.where(active, np.where(coupon_hit, 0.0, memory_missed+1.0), memory_missed)
+        else:
+            coupon_paid = np.where(coupon_hit, coupon_rate, 0.0)
+        pv += np.where(active, coupon_paid, 0.0) * disc
+
+        autocalled = active & (St >= ac_barrier)
+        pv += np.where(autocalled, 100.0*disc, 0.0)
+        life = np.where(autocalled, times[i], life)
+        called_at = np.where(autocalled, i, called_at)
+        active = active & ~autocalled
+
+    S_final = S_paths[:, -1]
+    disc_T = np.exp(-r*T)
+    protect_barrier = S_ref * protect_pct
+    capital = np.where(S_final >= protect_barrier, 100.0, 100.0*S_final/S_ref)
+    pv += np.where(active, capital*disc_T, 0.0)
+
+    price = float(np.mean(pv))
+    stderr = float(np.std(pv) / np.sqrt(n_paths))
+    proba_call = np.array([float(np.mean(called_at == i)) for i in range(n_obs)])
+    proba_loss = float(np.mean(active & (S_final < protect_barrier)))
+    vie_moyenne = float(np.mean(life))
+    return price, stderr, proba_call, proba_loss, vie_moyenne
+
+def autocall_sensis(S, S_ref, T, n_obs, r, q, sigma, autocall_pct, coupon_pct, protect_pct,
+                     coupon_rate, step_down_pct=0.0, memory=True, n_paths=20000, seed=42):
+    """Delta et Vega par différences finies à nombres aléatoires communs (même seed) : le bruit
+    Monte-Carlo s'annule en grande partie dans la différence, donnant des sensibilités lisses
+    sans avoir besoin d'un nombre de tirages démesuré. Seul le spot COURANT S est bumpé - S_ref
+    (et donc les barrières en absolu) reste fixe, pour une vraie sensibilité de couverture."""
+    hS = max(S*0.01, 0.5); hV = 0.01
+    p_s_up = autocall_price(S+hS, S_ref, T, n_obs, r, q, sigma, autocall_pct, coupon_pct, protect_pct, coupon_rate, step_down_pct, memory, n_paths, seed)[0]
+    p_s_dn = autocall_price(S-hS, S_ref, T, n_obs, r, q, sigma, autocall_pct, coupon_pct, protect_pct, coupon_rate, step_down_pct, memory, n_paths, seed)[0]
+    p_v_up = autocall_price(S, S_ref, T, n_obs, r, q, sigma+hV, autocall_pct, coupon_pct, protect_pct, coupon_rate, step_down_pct, memory, n_paths, seed)[0]
+    p_v_dn = autocall_price(S, S_ref, T, n_obs, r, q, sigma-hV, autocall_pct, coupon_pct, protect_pct, coupon_rate, step_down_pct, memory, n_paths, seed)[0]
+    delta = (p_s_up - p_s_dn) / (2*hS)
+    vega  = (p_v_up - p_v_dn) / (2*hV) / 100
+    return delta, vega
+
+
 def mat_from_ymd(y,m,d): return max(y+m/12+d/365, 1/365)
 
 def fmt_mat(T):
@@ -944,12 +1070,23 @@ BUILDER_TEMPLATES = {
         dict(dir=1,  inst="call", K_pct=-0.07, qty=1),
         dict(dir=-1, inst="call", K_pct=0, qty=2),
         dict(dir=1,  inst="call", K_pct=0.07, qty=1)]},
-    "Covered Call":      {"n":2, "legs":[
-        dict(dir=1,  inst="call", K_pct=0),
-        dict(dir=-1, inst="call", K_pct=0.07)]},
-    "Protective Put":    {"n":2, "legs":[
-        dict(dir=1,  inst="put",  K_pct=-0.07),
-        dict(dir=1,  inst="call", K_pct=0)]},
+    # Covered Call = Action + Vente Call OTM. Le builder ne modélise que des jambes call/put (pas d'Action) :
+    # on utilise donc la réplication synthétique par parité call-put (S - C(K) ≡ K·e^-rT - P(K)), qui donne
+    # exactement le même profil de risque (Delta/Gamma/Vega/Theta) via une simple Vente de Put au même strike.
+    "Covered Call (synthétique)":    {"n":1, "legs":[
+        dict(dir=-1, inst="put", K_pct=0.07)]},
+    # Protective Put = Action + Achat Put OTM. Par parité (S + P(K) ≡ C(K) + K·e^-rT), réplication synthétique
+    # par un simple Achat de Call au même strike : même profil de risque, capital non immobilisé dans l'action.
+    "Protective Put (synthétique)":  {"n":1, "legs":[
+        dict(dir=1,  inst="call", K_pct=-0.07)]},
+}
+BUILDER_SYNTHETIC_NOTE = {
+    "Covered Call (synthétique)": "Réplication par parité call-put : Action + Vente Call(K) \u2261 Vente Put(K) "
+        "(+ un montant en cash). Même Delta/Gamma/Vega/Theta que la vraie covered call ; seul le P&L absolu "
+        "diffère légèrement d'une constante liée au financement (taux r vs dividende q).",
+    "Protective Put (synthétique)": "Réplication par parité call-put : Action + Achat Put(K) \u2261 Achat Call(K) "
+        "(+ un montant en cash). Même Delta/Gamma/Vega/Theta que la vraie protective put, sans immobiliser "
+        "de capital dans l'action - le builder ne modélise que des jambes call/put.",
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -1350,35 +1487,60 @@ with tab3:
         _uploaded = st.file_uploader("Fichier .json", type=["json"], key="import_strat_file",
                                      label_visibility="collapsed")
         if _uploaded is not None:
-            if st.button("\u2b06\ufe0f Charger cette configuration", key="import_strat_btn", use_container_width=True):
-                try:
-                    _payload = json.loads(_uploaded.getvalue().decode("utf-8"))
-                    _legs_in = _payload.get("legs", [])
-                    for i in range(6):
-                        if i < len(_legs_in):
-                            leg = _legs_in[i]
-                            st.session_state[f"la_{i}"] = bool(leg.get("active", False))
-                            st.session_state[f"ldir_state_{i}"] = int(leg.get("dir", 1))
-                            st.session_state[f"li_{i}"] = leg.get("inst", "call")
-                            st.session_state[f"ls_{i}"] = float(leg.get("S", 100.0))
-                            st.session_state[f"lk_{i}"] = float(leg.get("K", 100.0))
-                            st.session_state[f"lq_{i}"] = int(leg.get("qty", 1))
-                            st.session_state[f"lr_{i}"] = float(leg.get("r", 5.0))
-                            st.session_state[f"lq_div_{i}"] = float(leg.get("q", 0.0))
-                            st.session_state[f"lsig_{i}"] = float(leg.get("sigma", 20.0))
-                            st.session_state[f"ly_{i}"] = int(leg.get("y", 1))
-                            st.session_state[f"lm_{i}"] = int(leg.get("m", 0))
-                            st.session_state[f"ld_{i}"] = int(leg.get("d", 0))
-                        else:
-                            st.session_state[f"la_{i}"] = False
-                    st.session_state["n_legs_slider"] = max(1, min(6, int(_payload.get("n_legs", 2))))
-                    st.session_state["t_pct_3"] = 100
-                    st.session_state["strat_name"] = _payload.get("name", "Stratégie importée")
-                    st.session_state["tpl_sel"] = "- Personnalisé -"
-                    st.session_state["_import_ok"] = True
-                    st.rerun()
-                except Exception as _e:
-                    st.error(f"Fichier invalide ou corrompu : {_e}")
+            # Aperçu (parsing seul, aucune écriture en session_state) pour vérifier le contenu avant de l'appliquer
+            try:
+                _preview = json.loads(_uploaded.getvalue().decode("utf-8"))
+                _preview_legs = _preview.get("legs", [])
+                _preview_active = sum(1 for l in _preview_legs if l.get("active"))
+                _preview_details = ", ".join(
+                    f"{l.get('inst','?')} K={l.get('K','?')}" for l in _preview_legs if l.get("active")
+                ) or "aucune jambe active"
+                st.markdown(f'<div style="font-size:.72rem;color:var(--t2);background:var(--s1);'
+                           f'border:1px solid var(--b1);border-radius:8px;padding:8px 12px;margin:6px 0">'
+                           f'\U0001f4c4 <b>Aperçu</b> \u2014 "{html.escape(str(_preview.get("name","(sans nom)")))}" : '
+                           f'{_preview_active} jambe(s) active(s) sur {_preview.get("n_legs","?")} configurée(s)<br>'
+                           f'<span style="color:var(--t3)">{html.escape(_preview_details)}</span></div>',
+                           unsafe_allow_html=True)
+                _preview_ok = True
+            except Exception as _pe:
+                st.error(f"\u26a0\ufe0f Ce fichier ne semble pas être un JSON valide exporté par cette application : {_pe}")
+                _preview_ok = False
+
+            if _preview_ok:
+                _n_active_legs_now = sum(1 for i in range(6) if st.session_state.get(f"la_{i}", False))
+                if _n_active_legs_now > 0:
+                    st.caption(f"\u26a0\ufe0f Ceci remplacera vos {_n_active_legs_now} jambe(s) actuellement active(s).")
+                if st.button("\u2b06\ufe0f Charger cette configuration", key="import_strat_btn", use_container_width=True):
+                    try:
+                        _payload = _preview
+                        _legs_in = _payload.get("legs", [])
+                        for i in range(6):
+                            if i < len(_legs_in):
+                                leg = _legs_in[i]
+                                st.session_state[f"la_{i}"] = bool(leg.get("active", False))
+                                st.session_state[f"ldir_state_{i}"] = int(leg.get("dir", 1))
+                                st.session_state[f"li_{i}"] = leg.get("inst", "call")
+                                st.session_state[f"ls_{i}"] = float(leg.get("S", 100.0))
+                                st.session_state[f"lk_{i}"] = float(leg.get("K", 100.0))
+                                st.session_state[f"lq_{i}"] = int(leg.get("qty", 1))
+                                st.session_state[f"lr_{i}"] = float(leg.get("r", 5.0))
+                                st.session_state[f"lq_div_{i}"] = float(leg.get("q", 0.0))
+                                st.session_state[f"lsig_{i}"] = float(leg.get("sigma", 20.0))
+                                st.session_state[f"ly_{i}"] = int(leg.get("y", 1))
+                                st.session_state[f"lm_{i}"] = int(leg.get("m", 0))
+                                st.session_state[f"ld_{i}"] = int(leg.get("d", 0))
+                            else:
+                                st.session_state[f"la_{i}"] = False
+                        st.session_state["n_legs_slider"] = max(1, min(6, int(_payload.get("n_legs", 2))))
+                        st.session_state["t_pct_3"] = 100
+                        st.session_state["strat_name"] = _payload.get("name", "Stratégie importée")
+                        st.session_state["tpl_sel"] = "- Personnalisé -"
+                        st.session_state.pop("_confirm_apply_tpl", None)
+                        st.session_state.pop("_confirm_apply_tpl_n", None)
+                        st.session_state["_import_ok"] = True
+                        st.rerun()
+                    except Exception as _e:
+                        st.error(f"Fichier invalide ou corrompu : {_e}")
         st.caption("Format généré par le bouton \"Télécharger\" du panneau Export, plus bas - "
                   "fonctionne d'une session à l'autre.")
         if st.session_state.pop("_import_ok", False):
@@ -1401,10 +1563,13 @@ with tab3:
                            help="Sélectionnez une stratégie prédéfinie pour pré-remplir les jambes")
     if tpl_sel != "- Personnalisé -":
         tpl = BUILDER_TEMPLATES[tpl_sel]
-        st.markdown(f'<div class="tpl-info">Ce template va configurer <b>{tpl["n"]} jambes</b> '
-                    f'basés sur le strike K = {st.session_state.get("shared_K",100.0):.1f} \u20ac</div>',
+        _synth_note = BUILDER_SYNTHETIC_NOTE.get(tpl_sel, "")
+        _synth_html = f' <br>\u2139\ufe0f {_synth_note}' if _synth_note else ""
+        st.markdown(f'<div class="tpl-info">Ce template va configurer <b>{tpl["n"]} jambe(s)</b> '
+                    f'basés sur le strike K = {st.session_state.get("shared_K",100.0):.1f} \u20ac{_synth_html}</div>',
                     unsafe_allow_html=True)
-        if st.button("Appliquer le template", key="apply_tpl", use_container_width=True):
+
+        def _apply_template():
             K_base = st.session_state.get("shared_K", 100.0)
             S_base = st.session_state.get("shared_S", 100.0)
             sig_base = st.session_state.get("shared_sigma", 20.0)
@@ -1427,7 +1592,36 @@ with tab3:
                 st.session_state[f"la_{i}"] = False
             st.session_state["n_legs_slider"] = tpl["n"]
             st.session_state["strat_name"] = tpl_sel
+            st.session_state.pop("_confirm_apply_tpl", None)
+            st.session_state.pop("_confirm_apply_tpl_n", None)
             st.rerun()
+
+        # Nombre de jambes actuellement actives : si > 0, on demande confirmation avant d'écraser
+        _n_active_legs = sum(1 for i in range(6) if st.session_state.get(f"la_{i}", False))
+
+        if st.session_state.get("_confirm_apply_tpl") == tpl_sel:
+            _frozen_n = st.session_state.get("_confirm_apply_tpl_n", _n_active_legs)
+            st.warning(f"\u26a0\ufe0f Ceci va **remplacer** vos {_frozen_n} jambe(s) actuellement active(s) "
+                      f"par le template \"{tpl_sel}\". Pensez à exporter votre configuration actuelle "
+                      f"(panneau ci-dessus) si vous voulez la retrouver plus tard. Confirmer ?")
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                if st.button("\u2705 Confirmer et remplacer", key="confirm_apply_tpl_btn", use_container_width=True):
+                    st.session_state.pop("_confirm_apply_tpl_n", None)
+                    _apply_template()
+            with cc2:
+                if st.button("Annuler", key="cancel_apply_tpl_btn", use_container_width=True):
+                    st.session_state.pop("_confirm_apply_tpl", None)
+                    st.session_state.pop("_confirm_apply_tpl_n", None)
+                    st.rerun()
+        else:
+            if st.button("Appliquer le template", key="apply_tpl", use_container_width=True):
+                if _n_active_legs > 0:
+                    st.session_state["_confirm_apply_tpl"] = tpl_sel
+                    st.session_state["_confirm_apply_tpl_n"] = _n_active_legs
+                    st.rerun()
+                else:
+                    _apply_template()
 
     _tpl_default = st.session_state.pop("strat_name", "")
     sname=st.text_input("\u25CF Nom de la stratégie",value=_tpl_default,placeholder="Ma stratégie",
@@ -1845,7 +2039,9 @@ with tab5:
         "Hypothèse selon laquelle le franchissement de la barrière est surveillé <b>en continu</b> "
         "(à chaque instant), et non à des dates fixes (monitoring discret, ex. fixing quotidien en clôture). "
         "C'est l'hypothèse retenue par la formule fermée de Reiner-Rubinstein utilisée dans cet onglet - "
-        "en pratique, un monitoring discret réduit légèrement la probabilité de déclenchement.",
+        "en pratique, un monitoring discret réduit légèrement la probabilité de déclenchement. La case "
+        "\u00ab Monitoring discret \u00bb de l'onglet Shark Note applique la correction de continuité de "
+        "Broadie-Glasserman-Kou (1997) pour en tenir compte sans sortir du cadre de la formule fermée.",
         "#3b82f6", "59,130,246")
     cards4 += gls_card("\u26a0", "Risque de couverture", "Delta/Gamma près de H",
         "Près de la barrière, le Delta et le Gamma d'une option à barrière peuvent devenir extrêmement "
@@ -1853,6 +2049,58 @@ with tab5:
         "des vendeurs de produits à barrière : la position peut devenir très difficile à delta-hedger "
         "juste avant un déclenchement.",
         "#ef4444", "239,68,68")
+    cards4 += gls_card("\U0001f501", "Autocall / Phoenix", "Note à rappel automatique",
+        "Produit structuré <b>path-dependent</b> observé à des dates fixes (trimestrielles, semestrielles...). "
+        "Si le spot dépasse la <b>barrière de rappel</b> à une date d'observation, la note rembourse 100% du "
+        "nominal et s'arrête. Un <b>Phoenix</b> est un autocall dont la barrière de coupon est distincte (et "
+        "souvent inférieure) de la barrière de rappel : un coupon peut tomber sans que la note soit rappelée. "
+        "Pas de formule fermée - pricing par simulation Monte-Carlo, modélisé dans l'onglet Produits Structurés.",
+        "#c084fc", "192,132,252")
+    cards4 += gls_card("M\u00e9m", "Effet Mémoire", "Rattrapage de coupon",
+        "Sur un Phoenix à mémoire, un coupon manqué (barrière de coupon non franchie) n'est pas définitivement "
+        "perdu : il est <b>rattrapé</b> à la prochaine date où la barrière est franchie, en plus du coupon "
+        "normalement dû. Cette clause augmente la valeur de la note pour l'investisseur par rapport à un "
+        "Phoenix \u00ab sans mémoire \u00bb, où un coupon manqué est perdu définitivement.",
+        "#22c55e", "34,197,94")
+    cards4 += gls_card("PDI", "Barrière de Protection", "Protection conditionnelle du capital",
+        "Contrairement aux barrières de rappel/coupon (observées à chaque date), la barrière de protection "
+        "d'un autocall n'est en général observée qu'<b>à l'échéance finale</b>, et seulement si la note n'a "
+        "jamais été rappelée avant. Si le spot final est en-dessous, le capital n'est plus protégé : la perte "
+        "suit typiquement le sous-jacent au prorata (participation 1:1), comme un <b>Put Down-and-In</b> "
+        "européen sur cette seule date.",
+        "#f59e0b", "245,158,11")
+    cards4 += gls_card("\U0001f4b0", "Reverse Convertible", "Obligation + vente de put",
+        "Note qui verse un coupon fixe élevé, financé par la <b>vente d'un put</b> sur le sous-jacent : si le "
+        "sous-jacent termine sous le strike K, le capital remboursé est réduit au prorata de la baisse "
+        "(participation 1:1). C'est le produit structuré retail le plus répandu en Europe. Une <b>Barrier "
+        "Reverse Convertible (BRC)</b> conditionne cette perte à un franchissement préalable d'une barrière "
+        "H &lt; K (put down-and-in) : le capital reste protégé si H n'est jamais touchée.",
+        "#f472b6", "244,114,182")
+    cards4 += gls_card("\U0001f381", "Bonus Certificate", "Tracker avec plancher conditionnel",
+        "Réplique un tracker (participation 1:1 au sous-jacent) et garantit en plus un remboursement minimum "
+        "(le <b>bonus</b> B \u2265 S\u2080) à l'échéance, <b>tant qu'une barrière basse H n'a jamais été "
+        "touchée</b> en cours de vie. Se réplique par Tracker + Put(B) Down-and-Out(H) : si la barrière est "
+        "franchie, le plancher disparaît et le certificat redevient un simple tracker.",
+        "#22c55e", "34,197,94")
+    cards4 += gls_card("\U0001f680", "Certificat Outperformance", "Participation amplifiée à la hausse",
+        "Tracker (participation 1:1 des deux côtés) auquel s'ajoute une participation <b>supérieure à 100%</b> "
+        "à la hausse au-delà d'un strike K, financée par le coût plus faible d'un call que d'une position "
+        "actions équivalente. Se réplique par Tracker + (Participation\u22121) \u00d7 Call(K). Une variante "
+        "<b>capée</b> plafonne le gain maximal (vente d'un call à strike K\u2082 &gt; K) pour réduire le coût.",
+        "#c084fc", "192,132,252")
+    cards4 += gls_card("\u26aa", "Option Digitale (Binaire)", "Payoff tout ou rien",
+        "Option dont le payoff à l'échéance ne dépend que du <b>franchissement</b> d'un strike, pas de "
+        "l'ampleur du mouvement : une <b>cash-or-nothing</b> paie un montant fixe Q si la condition est "
+        "remplie (zéro sinon), une <b>asset-or-nothing</b> paie le sous-jacent lui-même. Une option vanille "
+        "se réplique exactement comme Asset-or-Nothing \u2212 K \u00d7 Cash-or-Nothing(Q=1). Delta et Gamma "
+        "explosent au voisinage du strike quand l'échéance approche (payoff discontinu).",
+        "#eab308", "234,179,8")
+    cards4 += gls_card("\U0001f4c8", "Tracker / Forward Synthétique", "Brique de réplication",
+        "Position qui réplique la performance 1:1 du sous-jacent sans le détenir physiquement, utilisée comme "
+        "brique de base des certificats Bonus et Outperformance. Sa valeur actualisée est S\u00b7e<sup>\u2212qT</sup> "
+        "(pour 1 unité de sous-jacent) : le rendement du dividende q réduit sa valeur, car le détenteur du "
+        "certificat ne perçoit pas les dividendes versés par l'action sous-jacente.",
+        "#3b82f6", "59,130,246")
     st.markdown(f'<div class="gls-grid">{cards4}</div>', unsafe_allow_html=True)
 
 with tab4:
@@ -1860,26 +2108,34 @@ with tab4:
                 'background:linear-gradient(135deg,#60a5fa 0%,#a78bfa 35%,#c084fc 60%,#f0abfc 85%,#fafafa 100%);'
                 '-webkit-background-clip:text;-webkit-text-fill-color:transparent">Barrières \u00b7 Produits structurés</span>'
                 '<span style="font-size:.74rem;color:var(--t3);margin-left:12px">'
-                'Options à barrière, Twin Win, Airbag / Cushion</span></div>',
+                'Options à barrière, Twin Win, Airbag / Cushion, Autocall / Phoenix, Reverse Convertible, '
+                'Bonus Certificate, Outperformance, Options Digitales</span></div>',
                 unsafe_allow_html=True)
 
     section_header("Famille de produit")
-    prod_family = st.radio("famille", ["barrier_simple", "twin_win", "airbag"], horizontal=True, key="bo_family",
+    prod_family = st.radio("famille", ["barrier_simple", "twin_win", "airbag", "autocall",
+                                       "reverse_convertible", "bonus", "outperformance", "digital"],
+                           horizontal=True, key="bo_family",
                            format_func=lambda x: {"barrier_simple": "Shark Note",
                                                   "twin_win": "Twin Win",
-                                                  "airbag": "Airbag / Cushion"}[x],
+                                                  "airbag": "Airbag / Cushion",
+                                                  "autocall": "Autocall / Phoenix",
+                                                  "reverse_convertible": "Reverse Convertible",
+                                                  "bonus": "Bonus Certificate",
+                                                  "outperformance": "Outperformance",
+                                                  "digital": "Options Digitales"}[x],
                            label_visibility="collapsed")
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
     if prod_family == "barrier_simple":
-        st.markdown("""<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
+        st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
                     '\U0001f988 <b>Shark Note</b> - produit structuré combinant une option '
-                    'vanille avec une <b>barrière</b> : si le sous-jacent touche le niveau H avant l'échéance, l'option '
+                    'vanille avec une <b>barrière</b> : si le sous-jacent touche le niveau H avant l\'échéance, l\'option '
                     'est désactivée (<b>knock-out</b>) ou au contraire activée (<b>knock-in</b>). Les briques classiques du '
                     'shark note sont le <b>Call Up-and-Out</b> et le <b>Put Down-and-Out</b>, mais les <b>8 combinaisons</b> '
                     'standard (Call/Put \u00d7 barrière Up/Down \u00d7 Out/In) sont modélisées ci-dessous. '
                     'Formule fermée de Reiner-Rubinstein, validée par simulation Monte-Carlo '
-                    '(pont brownien, écarts &lt;1.5% - et identité in+out=vanille vérifiée exactement).</div>""",
+                    '(pont brownien, écarts &lt;1.5% - et identité in+out=vanille vérifiée exactement).</div>',
                     unsafe_allow_html=True)
 
         section_header("Choisir le produit")
@@ -1943,14 +2199,31 @@ with tab4:
         field_label("Volatilité \u03c3 (%)")
         sigb = st.slider("sigb", 1.0, 150.0, 25.0, 0.5, key="bo_sigma", label_visibility="collapsed") / 100
 
+        discrete_monitor = st.checkbox(
+            "Monitoring discret (quotidien) — correction de continuité",
+            value=False, key="bo_discrete",
+            help="La formule de Reiner-Rubinstein suppose un monitoring CONTINU de la barrière. En pratique "
+                 "(fixing quotidien à la clôture), la barrière est moins souvent touchée. Correction de Broadie-"
+                 "Glasserman-Kou (1997) : on décale H d'un facteur exp(\u00b10.5826\u00b7\u03c3\u00b7\u221a(T/n)) "
+                 "(n = nb de jours de bourse jusqu'à l'échéance) pour approximer le prix discret avec la formule continue.")
+
         invalid = (b_dir == "up" and Hb <= Sb) or (b_dir == "down" and Hb >= Sb)
         if invalid:
             side = "strictement supérieure au spot" if b_dir == "up" else "strictement inférieure au spot"
             st.warning(f"Pour une barrière '{'Up' if b_dir=='up' else 'Down'}', H doit être {side} "
                       f"(H={Hb:.1f} vs S={Sb:.1f}).")
         else:
-            price = barrier_price(Sb, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)
-            Gb = barrier_greeks(Sb, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)
+            if discrete_monitor:
+                n_obs = max(int(round(Tb * 252)), 1)
+                _beta = 0.5826  # constante de Broadie-Glasserman-Kou (1997)
+                _corr = np.exp((_beta if b_dir == "up" else -_beta) * sigb * np.sqrt(Tb / n_obs))
+                Hb_calc = Hb * _corr
+            else:
+                n_obs = None
+                Hb_calc = Hb
+
+            price = barrier_price(Sb, Kb, Hb_calc, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)
+            Gb = barrier_greeks(Sb, Kb, Hb_calc, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)
             vanilla_ref = bs_price(Sb, Kb, Tb, rb, sigb, qb, b_otype)
             reduction = (1 - price/vanilla_ref)*100 if vanilla_ref > 1e-9 else 0.0
 
@@ -1967,7 +2240,7 @@ with tab4:
                     <div class="ph-row"><span class="ph-val">{price:.4f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
                     <div class="ph-sub">
                       <span>Vanille \u00e9quiv. = \u20ac{vanilla_ref:.4f}</span><span>{'Réduction' if reduction>=0 else 'Surcote'} = {reduction:+.1f}%</span>
-                      <span>H = {Hb:.1f}</span><span>Rebate = \u20ac{Rb:.2f}</span>
+                      <span>H = {Hb:.1f}{f' (H eff. monitoring discret = {Hb_calc:.2f}, n={n_obs}j)' if discrete_monitor else ''}</span><span>Rebate = \u20ac{Rb:.2f}</span>
                     </div>
                   </div>
                   <span class="ph-badge {badge_class}">{badge_text}</span>
@@ -1982,27 +2255,37 @@ with tab4:
                 cards_html_b = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_b)
                 st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_b}</div>',
                            unsafe_allow_html=True)
-                st.markdown('"""<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">Content</div>""">'
-                            'Delta/Gamma peuvent devenir très marqués à l\'approche de la barrière '
+                st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                            'Delta/Gamma peuvent devenir très marqués à l\'approche de la barrière — '
                             'c\'est un comportement normal des options à barrière, connu comme un risque de couverture pour '
                             'le vendeur d\'un produit à barrière.</div>', unsafe_allow_html=True)
 
             section_header("Visualisations")
             Nb = 220
-            lo = min(Sb, Hb) * 0.6
-            hi = max(Sb, Hb) * 1.25
+            lo = min(Sb, Hb_calc) * 0.6
+            hi = max(Sb, Hb_calc) * 1.25
             SRb = np.linspace(max(lo, 1), hi, Nb)
-            price_curve   = np.array([barrier_price(s, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb) for s in SRb])
-            delta_curve   = np.array([barrier_greeks(s, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)["delta"] for s in SRb])
+            price_curve = np.array([barrier_price(s, Kb, Hb_calc, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb) for s in SRb])
+            greeks_curve_b = [barrier_greeks(s, Kb, Hb_calc, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb) for s in SRb]
+            delta_curve = np.array([g["delta"] for g in greeks_curve_b])
+            gamma_curve = np.array([g["gamma"] for g in greeks_curve_b])
+
+            sigRb = np.linspace(0.02, 1.0, Nb)
+            price_vs_vol = np.array([barrier_price(Sb, Kb, Hb_calc, Tb, rb, s, qb, b_otype, b_dir, b_knock, Rb) for s in sigRb])
+            vanilla_vs_vol = np.array([bs_price(Sb, Kb, Tb, rb, s, qb, b_otype) for s in sigRb])
 
             acc = "#06b6d4" if b_otype == "call" else "#f472b6"
             _price_title = "Prix selon le spot" + (" - profil \"shark fin\"" if is_shark else "")
+            _hvlines = [{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
+                        {"x":Kb,"color":"#52525b","label":f"K={Kb:.0f}","dash":True},
+                        {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}]
+            if discrete_monitor:
+                _hvlines.append({"x":Hb_calc,"color":"#f59e0b","label":f"H eff.={Hb_calc:.1f}","dash":True})
+
             svg_bo1 = svg_chart([
                 {"x":list(SRb),"y":list(price_curve),"color":acc,"width":2.2,"fill":True,"fill_color":acc,"label":"Prix barrière"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac)",
-               vlines=[{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
-                       {"x":Kb,"color":"#52525b","label":f"K={Kb:.0f}","dash":True},
-                       {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}],
+               vlines=_hvlines,
                show_dot={"x":Sb,"y":price,"color":acc,"label":f"\u20ac{price:.3f}"},
                title=_price_title, responsive=True)
 
@@ -2010,14 +2293,34 @@ with tab4:
                 {"x":list(SRb),"y":list(delta_curve),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta",
                vlines=[{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
-                       {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}],
+                       {"x":Hb_calc,"color":"#ef4444","label":f"H={Hb_calc:.0f}","dash":True}],
                hline_zero=True,
                show_dot={"x":Sb,"y":Gb["delta"],"color":"#22c55e","label":f"{Gb['delta']:.4f}"},
                title="\u0394 Delta selon le spot", responsive=True)
 
+            svg_bo3 = svg_chart([
+                {"x":list(SRb),"y":list(gamma_curve),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma",
+               vlines=[{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
+                       {"x":Hb_calc,"color":"#ef4444","label":f"H={Hb_calc:.0f}","dash":True}],
+               hline_zero=True,
+               show_dot={"x":Sb,"y":Gb["gamma"],"color":"#a78bfa","label":f"{Gb['gamma']:.5f}"},
+               title="\u0393 Gamma selon le spot - pic près de H", responsive=True)
+
+            svg_bo4 = svg_chart([
+                {"x":list(sigRb*100),"y":list(vanilla_vs_vol),"color":"#52525b","width":1,"dash":True,"label":"Vanille équiv."},
+                {"x":list(sigRb*100),"y":list(price_vs_vol),"color":acc,"width":2.2,"fill":True,"fill_color":acc,"label":"Prix barrière"},
+            ], W=680, H=260, xlabel="Volatilité implicite (%)", ylabel="Prix (\u20ac)",
+               vlines=[{"x":sigb*100,"color":"#f59e0b","label":f"\u03c3={sigb*100:.1f}%","dash":True}],
+               show_dot={"x":sigb*100,"y":price,"color":acc,"label":f"\u20ac{price:.3f}"},
+               title="Prix selon la volatilité - vs vanille", responsive=True)
+
             cbo1, cbo2 = st.columns(2)
             with cbo1: show_svg(svg_bo1, full_width=True, title="Prix selon le spot", chart_id="barrier_price")
             with cbo2: show_svg(svg_bo2, full_width=True, title="Delta selon le spot", chart_id="barrier_delta")
+            cbo3, cbo4 = st.columns(2)
+            with cbo3: show_svg(svg_bo3, full_width=True, title="Gamma selon le spot", chart_id="barrier_gamma")
+            with cbo4: show_svg(svg_bo4, full_width=True, title="Prix selon la volatilité", chart_id="barrier_vol")
 
             if b_knock == "out":
                 st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
@@ -2180,16 +2483,26 @@ with tab4:
                vlines=vlines_tw, show_dot={"x":Stw,"y":price_tw,"color":"#c084fc","label":f"\u20ac{price_tw:.3f}"},
                title="Prix de la note selon le spot", responsive=True)
 
-            delta_curve_tw = np.array([_tw_note_greeks(s, Ttw, rtw, sigtw, qtw)["delta"] for s in SRtw])
+            greeks_curve_tw = [_tw_note_greeks(s, Ttw, rtw, sigtw, qtw) for s in SRtw]
+            delta_curve_tw = np.array([g["delta"] for g in greeks_curve_tw])
+            gamma_curve_tw = np.array([g["gamma"] for g in greeks_curve_tw])
             svg_tw2 = svg_chart([
                 {"x":list(SRtw),"y":list(delta_curve_tw),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_tw, hline_zero=True,
                show_dot={"x":Stw,"y":Gtw["delta"],"color":"#22c55e","label":f"{Gtw['delta']:.4f}"},
                title="\u0394 Delta selon le spot", responsive=True)
 
+            svg_tw3 = svg_chart([
+                {"x":list(SRtw),"y":list(gamma_curve_tw),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_tw, hline_zero=True,
+               show_dot={"x":Stw,"y":Gtw["gamma"],"color":"#a78bfa","label":f"{Gtw['gamma']:.5f}"},
+               title="\u0393 Gamma selon le spot - double pic près des barrières", responsive=True)
+
             ctw1, ctw2 = st.columns(2)
             with ctw1: show_svg(svg_tw1, full_width=True, title="Prix de la note selon le spot", chart_id="tw_price")
             with ctw2: show_svg(svg_tw2, full_width=True, title="Delta selon le spot", chart_id="tw_delta")
+            ctw3, _ctw_pad = st.columns(2)
+            with ctw3: show_svg(svg_tw3, full_width=True, title="Gamma selon le spot", chart_id="tw_gamma")
 
             st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
                         'L\'écart entre la courbe pleine (prix actuel, qui tient compte de la probabilité de '
@@ -2300,7 +2613,9 @@ with tab4:
             SRab = np.linspace(max(lo_ab, 1), hi_ab, Nab)
             price_curve_ab = np.array([_ab_note_price(s, Tab, rab, sigab, qab) for s in SRab])
             payoff_maturity_ab = 100 + Part_ab*np.maximum(SRab-Sab,0) - Gear_ab*np.maximum(Bab-SRab,0)
-            gamma_curve_ab = np.array([_ab_note_greeks(s, Tab, rab, sigab, qab)["gamma"] for s in SRab])
+            greeks_curve_ab = [_ab_note_greeks(s, Tab, rab, sigab, qab) for s in SRab]
+            delta_curve_ab = np.array([g["delta"] for g in greeks_curve_ab])
+            gamma_curve_ab = np.array([g["gamma"] for g in greeks_curve_ab])
 
             vlines_ab = [{"x":Sab,"color":"#3b82f6","label":f"S\u2080={Sab:.0f}","dash":True},
                         {"x":Bab,"color":"#ef4444","label":f"B={Bab:.0f}","dash":True}]
@@ -2312,6 +2627,12 @@ with tab4:
                vlines=vlines_ab, show_dot={"x":Sab,"y":price_ab,"color":"#c084fc","label":f"\u20ac{price_ab:.3f}"},
                title="Prix de la note selon le spot", responsive=True)
 
+            svg_ab2b = svg_chart([
+                {"x":list(SRab),"y":list(delta_curve_ab),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_ab, hline_zero=True,
+               show_dot={"x":Sab,"y":Gab["delta"],"color":"#22c55e","label":f"{Gab['delta']:.4f}"},
+               title="\u0394 Delta selon le spot", responsive=True)
+
             svg_ab2 = svg_chart([
                 {"x":list(SRab),"y":list(gamma_curve_ab),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_ab, hline_zero=True,
@@ -2320,7 +2641,9 @@ with tab4:
 
             cab1, cab2 = st.columns(2)
             with cab1: show_svg(svg_ab1, full_width=True, title="Prix de la note selon le spot", chart_id="ab_price")
-            with cab2: show_svg(svg_ab2, full_width=True, title="Gamma selon le spot", chart_id="ab_gamma")
+            with cab2: show_svg(svg_ab2b, full_width=True, title="Delta selon le spot", chart_id="ab_delta")
+            cab3, _cab_pad = st.columns(2)
+            with cab3: show_svg(svg_ab2, full_width=True, title="Gamma selon le spot", chart_id="ab_gamma")
 
             st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
                         'La ligne pointillée est le <b>payoff à maturité</b> (plat entre B et S\u2080 - zone de '
@@ -2330,6 +2653,633 @@ with tab4:
                         'produit y reste positive. Le graphique de droite confirme que le Gamma - supposé nul pour un '
                         'produit delta one - est en réalité concentré et de signe opposé autour de S\u2080 et B.</div>',
                         unsafe_allow_html=True)
+
+    elif prod_family == "autocall":
+        st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
+                    '\U0001f501 <b>Autocall / Phoenix</b> - note à rappel automatique : à chaque date d\'observation, '
+                    'si le sous-jacent est au-dessus de la <b>barrière de rappel</b>, la note rembourse 100% du '
+                    'nominal (+ coupon du jour) et cesse d\'exister. S\'il est seulement au-dessus de la '
+                    '<b>barrière de coupon</b> (souvent plus basse - structure "Phoenix"), un coupon est versé sans '
+                    'rappel. Le capital n\'est protégé qu\'à l\'<b>échéance finale</b> si la note n\'a jamais été '
+                    'rappelée et que le sous-jacent reste au-dessus de la <b>barrière de protection</b> - en dessous, '
+                    'la perte suit le sous-jacent au prorata (participation 1:1). Produit <b>path-dependent</b> : '
+                    'pas de formule fermée, pricing par <b>simulation Monte-Carlo</b> à nombres aléatoires communs '
+                    '(sensibilités lissées malgré le bruit de simulation).</div>',
+                    unsafe_allow_html=True)
+
+        section_header("Paramètres")
+        acp1, acp2, acp3 = st.columns(3)
+        with acp1:
+            S_ac = st.number_input("Spot / Strike S\u2080", value=100.0, step=1.0, key="ac_s",
+                                   help="Niveau de référence des barrières, en % duquel elles sont exprimées")
+        with acp2:
+            freq_ac = st.selectbox("Fréquence d'observation", ["Trimestrielle", "Semestrielle", "Annuelle"],
+                                   index=1, key="ac_freq")
+        with acp3:
+            T_years_ac = st.number_input("Maturité (années)", 1, 15, 3, 1, key="ac_years")
+
+        n_per_year = {"Trimestrielle": 4, "Semestrielle": 2, "Annuelle": 1}[freq_ac]
+        n_obs_ac = int(T_years_ac * n_per_year)
+        T_ac = float(T_years_ac)
+
+        acp4, acp5, acp6, acp7 = st.columns(4)
+        with acp4:
+            autocall_pct = st.slider("Barrière de rappel (% S\u2080)", 50, 150, 100, 5, key="ac_autocall",
+                                     help="Si le spot est au-dessus à une date d'observation : rappel à 100% du nominal") / 100
+        with acp5:
+            coupon_pct = st.slider("Barrière de coupon (% S\u2080)", 30, 150, 70, 5, key="ac_coupon",
+                                   help="Souvent < barrière de rappel (structure Phoenix) : le coupon peut tomber sans rappel") / 100
+        with acp6:
+            protect_pct = st.slider("Barrière de protection (% S\u2080)", 30, 100, 60, 5, key="ac_protect",
+                                    help="Observée uniquement à l'échéance finale, si la note n'a jamais été rappelée") / 100
+        with acp7:
+            step_down = st.slider("Dégressivité rappel (pts %/période)", 0.0, 10.0, 0.0, 0.5, key="ac_stepdown",
+                                  help="Recul de la barrière de rappel à chaque période (0 = barrière constante)") / 100
+
+        acp8, acp9, acp10 = st.columns(3)
+        with acp8:
+            coupon_rate_pct = st.number_input("Coupon par période (%)", 0.0, 20.0, 2.0, 0.25, key="ac_couponrate",
+                                              help="Coupon versé (% du nominal) si la barrière de coupon est franchie") / 100
+        with acp9:
+            memory_ac = st.checkbox("Effet mémoire des coupons", value=True, key="ac_memory",
+                                    help="Un coupon manqué est rattrapé à la prochaine date où la barrière de coupon est franchie")
+        with acp10:
+            n_paths_ac = st.select_slider("Nb simulations Monte-Carlo", options=[5000, 10000, 20000, 40000, 80000],
+                                          value=20000, key="ac_npaths",
+                                          help="Plus de simulations = résultat plus précis mais plus lent")
+
+        acp11, acp12 = st.columns(2)
+        with acp11:
+            r_ac = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="ac_r") / 100
+        with acp12:
+            q_ac = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="ac_q") / 100
+        field_label("Volatilité \u03c3 (%)")
+        sig_ac = st.slider("sigac", 1.0, 150.0, 25.0, 0.5, key="ac_sigma", label_visibility="collapsed") / 100
+
+        if coupon_pct > autocall_pct:
+            st.warning("La barrière de coupon est en général inférieure ou égale à la barrière de rappel "
+                      "(sinon la note serait toujours rappelée avant de pouvoir simplement verser un coupon).")
+
+        # Carte principale : spot courant = spot de référence (note fraîchement émise, "at the money")
+        _ac_args = (S_ac, S_ac, T_ac, n_obs_ac, r_ac, q_ac, sig_ac, autocall_pct, coupon_pct, protect_pct,
+                    coupon_rate_pct*100, step_down, memory_ac, n_paths_ac)
+        price_ac, stderr_ac, proba_call_ac, proba_loss_ac, vie_ac = autocall_price(*_ac_args)
+        delta_ac, vega_ac = autocall_sensis(*_ac_args)
+        ic95_ac = 1.96 * stderr_ac
+
+        st.markdown("---")
+        badge_text_ac = "PHOENIX" if coupon_pct < autocall_pct else "AUTOCALL"
+        hero_col, greeks_col = st.columns([5, 7], gap="large")
+        with hero_col:
+            st.markdown(f"""
+            <div class="ph">
+              <div>
+                <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
+                <div class="ph-row"><span class="ph-val">{price_ac:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                <div class="ph-sub">
+                  <span>IC95% Monte-Carlo = \u00b1{ic95_ac:.3f}\u20ac</span><span>Vie moyenne = {vie_ac:.2f} an(s)</span>
+                  <span>Proba perte capital = {proba_loss_ac*100:.1f}%</span>
+                </div>
+              </div>
+              <span class="ph-badge ph-c">{badge_text_ac}</span>
+            </div>""", unsafe_allow_html=True)
+        with greeks_col:
+            section_header("Sensibilités (Monte-Carlo, nombres aléatoires communs)")
+            gdata_ac = [("\u0394", "Delta", delta_ac, ".4f", "#22c55e", "Sensibilité au spot"),
+                        ("\u03bd", "Vega", vega_ac, ".4f", "#3b82f6", "Effet volatilité (\u20ac/%)")]
+            cards_html_ac = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_ac)
+            st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(2,1fr)">{cards_html_ac}</div>',
+                       unsafe_allow_html=True)
+            st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                       'Contrairement aux Grecques fermées du reste de l\'application, Delta et Vega sont ici estimés '
+                       'par différences finies <b>Monte-Carlo à nombres aléatoires communs</b> (même graine de tirage '
+                       'pour S\u2080\u00b1h) : cela annule l\'essentiel du bruit de simulation dans la différence.</div>',
+                       unsafe_allow_html=True)
+
+        section_header("Calendrier de rappel - probabilités par date d'observation")
+        _rows_ac = ""
+        _cum = 0.0
+        for i in range(n_obs_ac):
+            t_i = (i+1) * T_ac / n_obs_ac
+            ac_bar_i = S_ac * max(autocall_pct - step_down*i, 0.0)
+            p_i = proba_call_ac[i]
+            _cum += p_i
+            _bar_w = min(p_i*100*4, 100)
+            _rows_ac += (f'<tr><td style="text-align:left;padding-left:12px">T+{t_i:.2f} an(s)</td>'
+                        f'<td>{ac_bar_i:.1f} \u20ac</td>'
+                        f'<td><div style="display:flex;align-items:center;gap:8px;justify-content:center">'
+                        f'<div style="width:60px;height:6px;border-radius:3px;background:var(--s2);overflow:hidden">'
+                        f'<div style="width:{_bar_w:.0f}%;height:100%;background:#3b82f6"></div></div>'
+                        f'<span>{p_i*100:.1f}%</span></div></td>'
+                        f'<td>{_cum*100:.1f}%</td></tr>')
+        st.markdown('<table class="sc-grid"><tr><th>Date</th><th>Barrière de rappel</th>'
+                   '<th>Proba. rappel à cette date</th><th>Proba. cumulée</th></tr>'
+                   + _rows_ac + '</table>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
+                   f'Proba. de survie jusqu\'à l\'échéance sans rappel = <b>{(1-proba_call_ac.sum())*100:.1f}%</b>, '
+                   f'dont <b>{proba_loss_ac*100:.1f}%</b> avec franchissement de la barrière de protection '
+                   f'(perte en capital).</div>', unsafe_allow_html=True)
+
+        section_header("Visualisations")
+        _n_grid_ac = 15
+        _n_paths_curve = min(n_paths_ac, 8000)
+        SRac = np.linspace(max(S_ac*0.5, 1), S_ac*1.5, _n_grid_ac)
+        # S_ref = S_ac reste FIXE (barrières en absolu inchangées) ; seul le spot courant "s" varie -
+        # c'est la sensibilité utile pour reprice/couvrir une note déjà émise, comme pour les autres produits.
+        price_curve_ac = np.array([
+            autocall_price(s, S_ac, T_ac, n_obs_ac, r_ac, q_ac, sig_ac, autocall_pct, coupon_pct, protect_pct,
+                           coupon_rate_pct*100, step_down, memory_ac, _n_paths_curve)[0]
+            for s in SRac])
+        payoff_never_called_ac = np.where(SRac >= S_ac*protect_pct, 100.0, 100.0*SRac/S_ac)
+
+        svg_ac1 = svg_chart([
+            {"x":list(SRac),"y":list(payoff_never_called_ac),"color":"#52525b","width":1,"dash":True,
+             "label":"Si jamais rappelée (référence à maturité)"},
+            {"x":list(SRac),"y":list(price_curve_ac),"color":"#c084fc","width":2.2,"fill":True,"fill_color":"#c084fc",
+             "label":"Prix actuel de la note (Monte-Carlo)"},
+        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+           vlines=[{"x":S_ac,"color":"#3b82f6","label":f"S\u2080={S_ac:.0f}","dash":True},
+                   {"x":S_ac*protect_pct,"color":"#ef4444","label":f"Protection={S_ac*protect_pct:.0f}","dash":True},
+                   {"x":S_ac*coupon_pct,"color":"#f59e0b","label":f"Coupon={S_ac*coupon_pct:.0f}","dash":True},
+                   {"x":S_ac*autocall_pct,"color":"#22c55e","label":f"Rappel={S_ac*autocall_pct:.0f}","dash":True}],
+           show_dot={"x":S_ac,"y":price_ac,"color":"#c084fc","label":f"\u20ac{price_ac:.3f}"},
+           title="Prix de la note selon le spot de départ", responsive=True)
+        show_svg(svg_ac1, full_width=True, title="Prix de la note selon le spot", chart_id="ac_price")
+
+        st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
+                   'Les barrières restent fixées en absolu (au niveau S\u2080 de référence saisi ci-dessus) ; seul le '
+                   '<b>spot courant</b> varie ici, exactement comme pour les produits à barrière et le Twin Win '
+                   'ci-dessus - ce qui permet de repricer/couvrir une note déjà émise. Le prix (violet) reste proche '
+                   'de 100 tant que les barrières de rappel/coupon restent atteignables depuis le spot courant, et '
+                   'se rapproche de la ligne pointillée (valeur si jamais rappelée) quand le spot s\'effondre '
+                   'sous la barrière de protection.</div>',
+                   unsafe_allow_html=True)
+
+    # ═══════════════════ REVERSE CONVERTIBLE / BRC ═══════════════════
+    elif prod_family == "reverse_convertible":
+        st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
+                    '\U0001f4b0 <b>Reverse Convertible</b> - obligation à coupon élevé combinée à la vente d\'un '
+                    '<b>put</b> sur le sous-jacent : l\'investisseur reçoit un coupon fixe quoi qu\'il arrive, mais '
+                    'si le sous-jacent termine sous le strike K, le remboursement du capital est réduit au prorata '
+                    'de la baisse (participation 1:1, comme s\'il avait vendu un put nu). La variante '
+                    '<b>BRC (Barrier Reverse Convertible)</b> ajoute une barrière de protection H &lt; K : la perte '
+                    'en capital ne s\'active que si le sous-jacent a touché H en cours de vie (put down-and-in) - '
+                    'sinon le capital est intégralement protégé même si le sous-jacent finit sous K à l\'échéance. '
+                    'C\'est le produit structuré retail le plus répandu en Europe.</div>', unsafe_allow_html=True)
+
+        section_header("Paramètres")
+        rc1, rc2, rc3, rc4 = st.columns(4)
+        with rc1:
+            Src = st.number_input("Spot S\u2080", value=100.0, step=1.0, key="rc_s")
+        with rc2:
+            Krc = st.number_input("Strike K", value=100.0, step=1.0, key="rc_k",
+                                  help="Niveau de référence pour le remboursement du capital à l'échéance")
+        with rc3:
+            r_rc = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="rc_r") / 100
+        with rc4:
+            q_rc = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="rc_q") / 100
+
+        rc5, rc6, rc7 = st.columns(3)
+        with rc5:
+            field_label("Maturité (A / M / J)")
+            Trc = mat_inline("rc_t", 1, 0, 0)
+        with rc6:
+            field_label("Volatilité \u03c3 (%)")
+            sigrc = st.slider("sigrc", 1.0, 150.0, 25.0, 0.5, key="rc_sigma", label_visibility="collapsed") / 100
+        with rc7:
+            coupon_rc = st.slider("Coupon annualisé (%)", 0.0, 30.0, 8.0, 0.25, key="rc_coupon",
+                                  help="Coupon fixe versé quoi qu'il arrive, en % annuel du nominal") / 100
+
+        barrier_on_rc = st.checkbox("Barrier Reverse Convertible (BRC) - ajouter une barrière de protection",
+                                    value=True, key="rc_barrier_on")
+        Hrc = Krc * 0.7
+        if barrier_on_rc:
+            Hrc = st.slider("Barrière de protection H (% du strike K)", 50, 99, 70, 1, key="rc_h") / 100 * Krc
+
+        if barrier_on_rc and Hrc >= Krc:
+            st.warning("La barrière de protection H doit être strictement inférieure au strike K.")
+        else:
+            def _rc_price(S, T, sigma, r):
+                pr = (barrier_price(S, Krc, Hrc, T, r, sigma, q_rc, "put", "down", "in", 0.0) if barrier_on_rc
+                      else bs_price(S, Krc, T, r, sigma, q_rc, "put"))
+                return (100 + coupon_rc*100*T) * np.exp(-r*T) - (100/Krc)*pr
+
+            coupon_total = coupon_rc * 100 * Trc
+            put_rc = (barrier_price(Src, Krc, Hrc, Trc, r_rc, sigrc, q_rc, "put", "down", "in", 0.0) if barrier_on_rc
+                      else bs_price(Src, Krc, Trc, r_rc, sigrc, q_rc, "put"))
+            price_rc = _rc_price(Src, Trc, sigrc, r_rc)
+
+            hS = max(Src*0.0025, 1e-3); hV = 0.0025
+            p0 = price_rc
+            delta_rc = (_rc_price(Src+hS,Trc,sigrc,r_rc) - _rc_price(Src-hS,Trc,sigrc,r_rc)) / (2*hS)
+            gamma_rc = (_rc_price(Src+hS,Trc,sigrc,r_rc) - 2*p0 + _rc_price(Src-hS,Trc,sigrc,r_rc)) / (hS**2)
+            vega_rc  = (_rc_price(Src,Trc,sigrc+hV,r_rc) - _rc_price(Src,Trc,sigrc-hV,r_rc)) / (2*hV) / 100
+
+            st.markdown("---")
+            badge_rc = "BRC" if barrier_on_rc else "RC"
+            diff_par = price_rc - 100
+            hero_col, greeks_col = st.columns([5, 7], gap="large")
+            with hero_col:
+                st.markdown(f"""
+                <div class="ph">
+                  <div>
+                    <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
+                    <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                    <div class="ph-sub">
+                      <span>vs Pair (100) = {diff_par:+.2f}\u20ac</span><span>Coupon total = \u20ac{coupon_total:.2f}</span>
+                      <span>Put vendu = \u20ac{put_rc:.3f}</span>
+                    </div>
+                  </div>
+                  <span class="ph-badge ph-p">{badge_rc}</span>
+                </div>""", unsafe_allow_html=True)
+            with greeks_col:
+                section_header("Grecques (différences finies)")
+                gdata_rc = [("\u0394","Delta",delta_rc,".4f","#22c55e","Sensibilité au spot"),
+                            ("\u0393","Gamma",gamma_rc,".5f","#a78bfa","Convexité"),
+                            ("\u03bd","Vega",vega_rc,".4f","#3b82f6","Sensibilité à la vol")]
+                cards_html_rc = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_rc)
+                st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(3,1fr)">{cards_html_rc}</div>',
+                           unsafe_allow_html=True)
+                st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                           'Le Delta est négatif : la note perd de la valeur si le sous-jacent baisse - c\'est le '
+                           'reflet du put vendu implicitement pour financer le coupon. Sans barrière, cette '
+                           'exposition est lisse (put vanille) ; avec barrière (BRC), elle devient très marquée '
+                           'près de H, comme pour un Shark Note.</div>', unsafe_allow_html=True)
+
+            section_header("Visualisations")
+            Nrc = 220
+            lo = min(Src, Hrc if barrier_on_rc else Krc) * 0.5
+            hi = max(Src, Krc) * 1.4
+            SRrc = np.linspace(max(lo, 1), hi, Nrc)
+            price_curve_rc = np.array([_rc_price(s, Trc, sigrc, r_rc) for s in SRrc])
+            payoff_maturity_rc = (100+coupon_total) - (100/Krc)*np.maximum(Krc-SRrc, 0)
+            delta_curve_rc = np.array([(_rc_price(s+hS,Trc,sigrc,r_rc)-_rc_price(s-hS,Trc,sigrc,r_rc))/(2*hS) for s in SRrc])
+            gamma_curve_rc = np.array([(_rc_price(s+hS,Trc,sigrc,r_rc)-2*_rc_price(s,Trc,sigrc,r_rc)+_rc_price(s-hS,Trc,sigrc,r_rc))/(hS**2) for s in SRrc])
+
+            vlines_rc = [{"x":Src,"color":"#3b82f6","label":f"S={Src:.0f}","dash":True},
+                        {"x":Krc,"color":"#52525b","label":f"K={Krc:.0f}","dash":True}]
+            if barrier_on_rc: vlines_rc.append({"x":Hrc,"color":"#ef4444","label":f"H={Hrc:.0f}","dash":True})
+
+            svg_rc1 = svg_chart([
+                {"x":list(SRrc),"y":list(payoff_maturity_rc),"color":"#52525b","width":1,"dash":True,"label":"Remboursement à maturité (référence)"},
+                {"x":list(SRrc),"y":list(price_curve_rc),"color":"#f59e0b","width":2.2,"fill":True,"fill_color":"#f59e0b","label":"Prix actuel"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+               vlines=vlines_rc, show_dot={"x":Src,"y":price_rc,"color":"#f59e0b","label":f"\u20ac{price_rc:.3f}"},
+               title="Prix de la note selon le spot", responsive=True)
+            svg_rc2 = svg_chart([
+                {"x":list(SRrc),"y":list(delta_curve_rc),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_rc, hline_zero=True,
+               show_dot={"x":Src,"y":delta_rc,"color":"#22c55e","label":f"{delta_rc:.4f}"},
+               title="\u0394 Delta selon le spot", responsive=True)
+            svg_rc3 = svg_chart([
+                {"x":list(SRrc),"y":list(gamma_curve_rc),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_rc, hline_zero=True,
+               show_dot={"x":Src,"y":gamma_rc,"color":"#a78bfa","label":f"{gamma_rc:.5f}"},
+               title="\u0393 Gamma selon le spot", responsive=True)
+
+            crc1, crc2 = st.columns(2)
+            with crc1: show_svg(svg_rc1, full_width=True, title="Prix selon le spot", chart_id="rc_price")
+            with crc2: show_svg(svg_rc2, full_width=True, title="Delta selon le spot", chart_id="rc_delta")
+            crc3, _crc_pad = st.columns(2)
+            with crc3: show_svg(svg_rc3, full_width=True, title="Gamma selon le spot", chart_id="rc_gamma")
+
+    # ═══════════════════ BONUS CERTIFICATE ═══════════════════
+    elif prod_family == "bonus":
+        st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
+                    '\U0001f381 <b>Bonus Certificate</b> - participation 1:1 au sous-jacent (comme un tracker), '
+                    'avec un plancher <b>bonus</b> B \u2265 S\u2080 garanti à l\'échéance <b>tant que la barrière '
+                    'basse H n\'a jamais été touchée</b> en cours de vie. Si la barrière est touchée, le '
+                    'certificat perd son plancher et se comporte comme un simple tracker jusqu\'à l\'échéance. '
+                    'Réplication : Tracker (forward) + <b>Put(B) Down-and-Out</b> de barrière H - si la barrière '
+                    'survit, le put paie normalement max(B\u2212S<sub>T</sub>,0) ; si elle est touchée, il est '
+                    'annulé (knock-out) et il ne reste que le tracker.</div>', unsafe_allow_html=True)
+
+        section_header("Paramètres")
+        bn1, bn2, bn3, bn4 = st.columns(4)
+        with bn1:
+            Sbn = st.number_input("Spot S\u2080", value=100.0, step=1.0, key="bn_s")
+        with bn2:
+            Bbn = st.slider("Niveau Bonus B (% S\u2080)", 100, 200, 115, 1, key="bn_b") / 100 * Sbn
+        with bn3:
+            Hbn = st.slider("Barrière H (% S\u2080)", 20, 99, 70, 1, key="bn_h") / 100 * Sbn
+        with bn4:
+            field_label("Maturité (A / M / J)")
+            Tbn = mat_inline("bn_t", 1, 0, 0)
+
+        bn5, bn6, bn7 = st.columns(3)
+        with bn5:
+            r_bn = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="bn_r") / 100
+        with bn6:
+            q_bn = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="bn_q") / 100
+        with bn7:
+            field_label("Volatilité \u03c3 (%)")
+            sigbn = st.slider("sigbn", 1.0, 150.0, 25.0, 0.5, key="bn_sigma", label_visibility="collapsed") / 100
+
+        if Hbn >= Sbn:
+            st.warning("La barrière H doit être strictement inférieure au spot S\u2080.")
+        elif Bbn < Sbn:
+            st.warning("Le niveau bonus B est en général \u2265 S\u2080 (sinon le certificat n'apporte aucun bonus).")
+        else:
+            def _bn_price(S, T, sigma, r):
+                tracker = (S/Sbn)*100*np.exp(-q_bn*T)
+                put_dno = barrier_price(S, Bbn, Hbn, T, r, sigma, q_bn, "put", "down", "out", 0.0)
+                return tracker + (100/Sbn)*put_dno
+
+            price_bn = _bn_price(Sbn, Tbn, sigbn, r_bn)
+            hS = max(Sbn*0.0025, 1e-3); hV = 0.0025
+            p0 = price_bn
+            delta_bn = (_bn_price(Sbn+hS,Tbn,sigbn,r_bn) - _bn_price(Sbn-hS,Tbn,sigbn,r_bn)) / (2*hS)
+            gamma_bn = (_bn_price(Sbn+hS,Tbn,sigbn,r_bn) - 2*p0 + _bn_price(Sbn-hS,Tbn,sigbn,r_bn)) / (hS**2)
+            vega_bn  = (_bn_price(Sbn,Tbn,sigbn+hV,r_bn) - _bn_price(Sbn,Tbn,sigbn-hV,r_bn)) / (2*hV) / 100
+            niveau_bonus_pct = (Bbn/Sbn - 1) * 100
+
+            st.markdown("---")
+            hero_col, greeks_col = st.columns([5, 7], gap="large")
+            with hero_col:
+                st.markdown(f"""
+                <div class="ph">
+                  <div>
+                    <div class="ph-ey">Prix du certificat (pour 100\u20ac de nominal)</div>
+                    <div class="ph-row"><span class="ph-val">{price_bn:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                    <div class="ph-sub">
+                      <span>Bonus = +{niveau_bonus_pct:.1f}%</span><span>Distance à H = {(Sbn-Hbn)/Sbn*100:.1f}%</span>
+                      <span>vs Tracker pur = {price_bn-100:+.2f}\u20ac</span>
+                    </div>
+                  </div>
+                  <span class="ph-badge ph-c">BONUS</span>
+                </div>""", unsafe_allow_html=True)
+            with greeks_col:
+                section_header("Grecques (différences finies)")
+                gdata_bn = [("\u0394","Delta",delta_bn,".4f","#22c55e","Sensibilité au spot"),
+                            ("\u0393","Gamma",gamma_bn,".5f","#a78bfa","Convexité"),
+                            ("\u03bd","Vega",vega_bn,".4f","#3b82f6","Sensibilité à la vol")]
+                cards_html_bn = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_bn)
+                st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(3,1fr)">{cards_html_bn}</div>',
+                           unsafe_allow_html=True)
+                st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                           'Le Delta reste proche de +1 (comportement de tracker) tant que le spot est loin des '
+                           'deux niveaux clés ; il devient plus instable près de la barrière H, où le put '
+                           'down-and-out implicite concentre sa sensibilité.</div>', unsafe_allow_html=True)
+
+            section_header("Visualisations")
+            Nbn = 220
+            SRbn = np.linspace(max(Hbn*0.6, 1), Bbn*1.3, Nbn)
+            price_curve_bn = np.array([_bn_price(s, Tbn, sigbn, r_bn) for s in SRbn])
+            payoff_maturity_bn = np.where(SRbn>=Hbn, np.maximum(SRbn/Sbn*100, Bbn/Sbn*100), SRbn/Sbn*100)
+            delta_curve_bn = np.array([(_bn_price(s+hS,Tbn,sigbn,r_bn)-_bn_price(s-hS,Tbn,sigbn,r_bn))/(2*hS) for s in SRbn])
+            gamma_curve_bn = np.array([(_bn_price(s+hS,Tbn,sigbn,r_bn)-2*_bn_price(s,Tbn,sigbn,r_bn)+_bn_price(s-hS,Tbn,sigbn,r_bn))/(hS**2) for s in SRbn])
+
+            vlines_bn = [{"x":Sbn,"color":"#3b82f6","label":f"S\u2080={Sbn:.0f}","dash":True},
+                        {"x":Bbn,"color":"#22c55e","label":f"B={Bbn:.0f}","dash":True},
+                        {"x":Hbn,"color":"#ef4444","label":f"H={Hbn:.0f}","dash":True}]
+
+            svg_bn1 = svg_chart([
+                {"x":list(SRbn),"y":list(payoff_maturity_bn),"color":"#52525b","width":1,"dash":True,"label":"Payoff à maturité (si barrière jamais touchée)"},
+                {"x":list(SRbn),"y":list(price_curve_bn),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"Prix actuel"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+               vlines=vlines_bn, show_dot={"x":Sbn,"y":price_bn,"color":"#22c55e","label":f"\u20ac{price_bn:.3f}"},
+               title="Prix du certificat selon le spot", responsive=True)
+            svg_bn2 = svg_chart([
+                {"x":list(SRbn),"y":list(delta_curve_bn),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_bn, hline_zero=True,
+               show_dot={"x":Sbn,"y":delta_bn,"color":"#22c55e","label":f"{delta_bn:.4f}"},
+               title="\u0394 Delta selon le spot", responsive=True)
+            svg_bn3 = svg_chart([
+                {"x":list(SRbn),"y":list(gamma_curve_bn),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_bn, hline_zero=True,
+               show_dot={"x":Sbn,"y":gamma_bn,"color":"#a78bfa","label":f"{gamma_bn:.5f}"},
+               title="\u0393 Gamma selon le spot", responsive=True)
+
+            cbn1, cbn2 = st.columns(2)
+            with cbn1: show_svg(svg_bn1, full_width=True, title="Prix selon le spot", chart_id="bn_price")
+            with cbn2: show_svg(svg_bn2, full_width=True, title="Delta selon le spot", chart_id="bn_delta")
+            cbn3, _cbn_pad = st.columns(2)
+            with cbn3: show_svg(svg_bn3, full_width=True, title="Gamma selon le spot", chart_id="bn_gamma")
+
+    # ═══════════════════ OUTPERFORMANCE / LEVIER ═══════════════════
+    elif prod_family == "outperformance":
+        st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
+                    '\U0001f680 <b>Certificat Outperformance</b> - participation 1:1 au sous-jacent à la baisse '
+                    '(tracker), mais participation <b>amplifiée</b> (&gt;100%) à la hausse au-delà du strike K. '
+                    'Réplication : Tracker + (Participation \u2212 1) \u00d7 <b>Call(K)</b>. Un <b>cap</b> optionnel '
+                    'plafonne le gain maximal en finançant le surcoût par la vente d\'un call à un strike '
+                    'supérieur K<sub>2</sub> (certificat \u00ab Outperformance Capée \u00bb).</div>', unsafe_allow_html=True)
+
+        section_header("Paramètres")
+        op1, op2, op3, op4 = st.columns(4)
+        with op1:
+            Sop = st.number_input("Spot S\u2080", value=100.0, step=1.0, key="op_s")
+        with op2:
+            Kop = st.number_input("Strike K", value=100.0, step=1.0, key="op_k",
+                                  help="Niveau au-delà duquel la participation amplifiée s'applique")
+        with op3:
+            part_op = st.slider("Participation (%)", 100, 300, 150, 5, key="op_part",
+                                help="Taux de participation à la hausse au-delà de K (150% = 1.5x)") / 100
+        with op4:
+            field_label("Maturité (A / M / J)")
+            Top = mat_inline("op_t", 1, 0, 0)
+
+        op5, op6, op7 = st.columns(3)
+        with op5:
+            r_op = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="op_r") / 100
+        with op6:
+            q_op = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="op_q") / 100
+        with op7:
+            field_label("Volatilité \u03c3 (%)")
+            sigop = st.slider("sigop", 1.0, 150.0, 25.0, 0.5, key="op_sigma", label_visibility="collapsed") / 100
+
+        cap_on = st.checkbox("Ajouter un cap (Outperformance Capée)", value=False, key="op_cap_on")
+        Kop2 = Kop * 1.3
+        if cap_on:
+            Kop2 = st.slider("Strike du cap K\u2082 (% S\u2080)", 105, 250, 130, 1, key="op_k2") / 100 * Sop
+
+        if cap_on and Kop2 <= Kop:
+            st.warning("Le strike du cap K\u2082 doit être supérieur au strike K.")
+        else:
+            def _op_price(S, T, sigma, r):
+                tracker = (S/Sop)*100*np.exp(-q_op*T)
+                extra_call = (part_op-1)*(100/Sop)*bs_price(S, Kop, T, r, sigma, q_op, "call")
+                cap_leg = -(part_op-1)*(100/Sop)*bs_price(S, Kop2, T, r, sigma, q_op, "call") if cap_on else 0.0
+                return tracker + extra_call + cap_leg
+
+            price_op = _op_price(Sop, Top, sigop, r_op)
+            hS = max(Sop*0.0025, 1e-3); hV = 0.0025
+            p0 = price_op
+            delta_op = (_op_price(Sop+hS,Top,sigop,r_op) - _op_price(Sop-hS,Top,sigop,r_op)) / (2*hS)
+            gamma_op = (_op_price(Sop+hS,Top,sigop,r_op) - 2*p0 + _op_price(Sop-hS,Top,sigop,r_op)) / (hS**2)
+            vega_op  = (_op_price(Sop,Top,sigop+hV,r_op) - _op_price(Sop,Top,sigop-hV,r_op)) / (2*hV) / 100
+            cap_gain = ((Kop2/Sop*100) + (part_op-1)*(Kop2-Kop)/Sop*100 - 100) if cap_on else None
+
+            st.markdown("---")
+            hero_col, greeks_col = st.columns([5, 7], gap="large")
+            with hero_col:
+                _cap_sub = f'<span>Gain max = +{cap_gain:.1f}%</span>' if cap_on else '<span>Gain max = illimité</span>'
+                st.markdown(f"""
+                <div class="ph">
+                  <div>
+                    <div class="ph-ey">Prix du certificat (pour 100\u20ac de nominal)</div>
+                    <div class="ph-row"><span class="ph-val">{price_op:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                    <div class="ph-sub">
+                      <span>Participation = {part_op*100:.0f}%</span>{_cap_sub}<span>vs Tracker pur = {price_op-100:+.2f}\u20ac</span>
+                    </div>
+                  </div>
+                  <span class="ph-badge ph-c">{'CAPÉ' if cap_on else 'OUTPERF.'}</span>
+                </div>""", unsafe_allow_html=True)
+            with greeks_col:
+                section_header("Grecques (différences finies)")
+                gdata_op = [("\u0394","Delta",delta_op,".4f","#22c55e","Sensibilité au spot"),
+                            ("\u0393","Gamma",gamma_op,".5f","#a78bfa","Convexité"),
+                            ("\u03bd","Vega",vega_op,".4f","#3b82f6","Sensibilité à la vol")]
+                cards_html_op = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_op)
+                st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(3,1fr)">{cards_html_op}</div>',
+                           unsafe_allow_html=True)
+                st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                           'Le Delta dépasse 1 au-dessus de K (participation amplifiée) et redescend vers 1 '
+                           'au-dessus du cap K\u2082 si celui-ci est activé, la position longue supplémentaire '
+                           'étant alors intégralement compensée par le call vendu.</div>', unsafe_allow_html=True)
+
+            section_header("Visualisations")
+            Nop = 220
+            SRop = np.linspace(max(Sop*0.4, 1), (Kop2 if cap_on else Kop*1.6)*1.15, Nop)
+            price_curve_op = np.array([_op_price(s, Top, sigop, r_op) for s in SRop])
+            payoff_maturity_op = (SRop/Sop*100) + (part_op-1)*(100/Sop)*np.maximum(SRop-Kop,0)
+            if cap_on:
+                payoff_maturity_op -= (part_op-1)*(100/Sop)*np.maximum(SRop-Kop2,0)
+            delta_curve_op = np.array([(_op_price(s+hS,Top,sigop,r_op)-_op_price(s-hS,Top,sigop,r_op))/(2*hS) for s in SRop])
+            gamma_curve_op = np.array([(_op_price(s+hS,Top,sigop,r_op)-2*_op_price(s,Top,sigop,r_op)+_op_price(s-hS,Top,sigop,r_op))/(hS**2) for s in SRop])
+
+            vlines_op = [{"x":Sop,"color":"#3b82f6","label":f"S\u2080={Sop:.0f}","dash":True},
+                        {"x":Kop,"color":"#52525b","label":f"K={Kop:.0f}","dash":True}]
+            if cap_on: vlines_op.append({"x":Kop2,"color":"#ef4444","label":f"K\u2082={Kop2:.0f}","dash":True})
+
+            svg_op1 = svg_chart([
+                {"x":list(SRop),"y":list(payoff_maturity_op),"color":"#52525b","width":1,"dash":True,"label":"Payoff à maturité"},
+                {"x":list(SRop),"y":list(price_curve_op),"color":"#c084fc","width":2.2,"fill":True,"fill_color":"#c084fc","label":"Prix actuel"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+               vlines=vlines_op, show_dot={"x":Sop,"y":price_op,"color":"#c084fc","label":f"\u20ac{price_op:.3f}"},
+               title="Prix du certificat selon le spot", responsive=True)
+            svg_op2 = svg_chart([
+                {"x":list(SRop),"y":list(delta_curve_op),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_op, hline_zero=True,
+               show_dot={"x":Sop,"y":delta_op,"color":"#22c55e","label":f"{delta_op:.4f}"},
+               title="\u0394 Delta selon le spot", responsive=True)
+            svg_op3 = svg_chart([
+                {"x":list(SRop),"y":list(gamma_curve_op),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_op, hline_zero=True,
+               show_dot={"x":Sop,"y":gamma_op,"color":"#a78bfa","label":f"{gamma_op:.5f}"},
+               title="\u0393 Gamma selon le spot", responsive=True)
+
+            cop1, cop2 = st.columns(2)
+            with cop1: show_svg(svg_op1, full_width=True, title="Prix selon le spot", chart_id="op_price")
+            with cop2: show_svg(svg_op2, full_width=True, title="Delta selon le spot", chart_id="op_delta")
+            cop3, _cop_pad = st.columns(2)
+            with cop3: show_svg(svg_op3, full_width=True, title="Gamma selon le spot", chart_id="op_gamma")
+
+    # ═══════════════════ OPTIONS DIGITALES ═══════════════════
+    elif prod_family == "digital":
+        st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
+                    '\U0001f3af <b>Options Digitales (binaires)</b> - payoff \u00ab tout ou rien \u00bb à '
+                    'l\'échéance. Une <b>cash-or-nothing</b> paie un montant fixe Q si la condition est remplie '
+                    '(S<sub>T</sub>&gt;K pour un call, S<sub>T</sub>&lt;K pour un put), zéro sinon. Une '
+                    '<b>asset-or-nothing</b> paie S<sub>T</sub> lui-même (pas un montant fixe) si la condition '
+                    'est remplie. Le Delta et le Gamma sont extrêmement marqués au voisinage du strike quand '
+                    'l\'échéance approche - la couverture d\'une position digitale est notoirement délicate '
+                    'près du strike juste avant expiration (le payoff y est discontinu).</div>', unsafe_allow_html=True)
+
+        section_header("Paramètres")
+        dg1, dg2, dg3, dg4 = st.columns(4)
+        with dg1:
+            Sdg = st.number_input("Spot S\u2080", value=100.0, step=1.0, key="dg_s")
+        with dg2:
+            Kdg = st.number_input("Strike K", value=100.0, step=1.0, key="dg_k")
+        with dg3:
+            otype_dg = st.selectbox("Type", ["call", "put"], key="dg_otype",
+                                    format_func=lambda x: "Call (paie si S>K)" if x=="call" else "Put (paie si S<K)")
+        with dg4:
+            style_dg = st.selectbox("Style", ["cash", "asset"], key="dg_style",
+                                    format_func=lambda x: "Cash-or-Nothing" if x=="cash" else "Asset-or-Nothing")
+
+        dg5, dg6, dg7, dg8 = st.columns(4)
+        with dg5:
+            field_label("Maturité (A / M / J)")
+            Tdg = mat_inline("dg_t", 0, 3, 0)
+        with dg6:
+            r_dg = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="dg_r") / 100
+        with dg7:
+            q_dg = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="dg_q") / 100
+        with dg8:
+            field_label("Volatilité \u03c3 (%)")
+            sigdg = st.slider("sigdg", 1.0, 150.0, 25.0, 0.5, key="dg_sigma", label_visibility="collapsed") / 100
+
+        Qdg = 100.0
+        if style_dg == "cash":
+            Qdg = st.number_input("Montant fixe Q (\u20ac) si la condition est remplie", value=100.0, step=10.0, key="dg_q_amount")
+
+        price_dg = digital_price(Sdg, Kdg, Tdg, r_dg, sigdg, q_dg, otype_dg, style_dg, Qdg)
+        Gdg = digital_greeks(Sdg, Kdg, Tdg, r_dg, sigdg, q_dg, otype_dg, style_dg, Qdg)
+        max_payout_dg = Qdg if style_dg == "cash" else Sdg*3
+
+        st.markdown("---")
+        hero_col, greeks_col = st.columns([5, 7], gap="large")
+        with hero_col:
+            st.markdown(f"""
+            <div class="ph">
+              <div>
+                <div class="ph-ey">Prix de l'option digitale</div>
+                <div class="ph-row"><span class="ph-val">{price_dg:.4f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                <div class="ph-sub">
+                  <span>Payout si touché = {(f'\u20ac{Qdg:.2f} (fixe)' if style_dg=='cash' else 'S\u1d1b (variable)')}</span>
+                  <span>Proba. risque-neutre \u2248 {(price_dg/Qdg*np.exp(r_dg*Tdg)*100 if style_dg=='cash' else float('nan')):.1f}%</span>
+                </div>
+              </div>
+              <span class="ph-badge {'ph-c' if otype_dg=='call' else 'ph-p'}">{('CASH' if style_dg=='cash' else 'ASSET')}-{otype_dg.upper()}</span>
+            </div>""", unsafe_allow_html=True)
+        with greeks_col:
+            section_header("Grecques (différences finies)")
+            gdata_dg = [("\u0394","Delta",Gdg["delta"],".4f","#22c55e","Sensibilité au spot"),
+                        ("\u0393","Gamma",Gdg["gamma"],".5f","#a78bfa","Convexité (pic au strike)"),
+                        ("\u03bd","Vega",Gdg["vega"],".4f","#3b82f6","Sensibilité à la vol"),
+                        ("\u0398","Theta",Gdg["theta"],".4f","#f59e0b","Décroissance temporelle (/jour)")]
+            cards_html_dg = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_dg)
+            st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(2,1fr)">{cards_html_dg}</div>',
+                       unsafe_allow_html=True)
+
+        section_header("Visualisations")
+        Ndg = 220
+        SRdg = np.linspace(max(Kdg*0.4, 1), Kdg*1.6, Ndg)
+        price_curve_dg = np.array([digital_price(s, Kdg, Tdg, r_dg, sigdg, q_dg, otype_dg, style_dg, Qdg) for s in SRdg])
+        payoff_maturity_dg = np.where((SRdg>Kdg) if otype_dg=="call" else (SRdg<Kdg),
+                                      (Qdg if style_dg=="cash" else SRdg), 0.0)
+        greeks_curve_dg = [digital_greeks(s, Kdg, Tdg, r_dg, sigdg, q_dg, otype_dg, style_dg, Qdg) for s in SRdg]
+        delta_curve_dg = np.array([g["delta"] for g in greeks_curve_dg])
+        gamma_curve_dg = np.array([g["gamma"] for g in greeks_curve_dg])
+
+        vlines_dg = [{"x":Sdg,"color":"#3b82f6","label":f"S={Sdg:.0f}","dash":True},
+                    {"x":Kdg,"color":"#52525b","label":f"K={Kdg:.0f}","dash":True}]
+        acc_dg = "#06b6d4" if otype_dg == "call" else "#f472b6"
+
+        svg_dg1 = svg_chart([
+            {"x":list(SRdg),"y":list(payoff_maturity_dg),"color":"#52525b","width":1,"dash":True,"label":"Payoff à maturité"},
+            {"x":list(SRdg),"y":list(price_curve_dg),"color":acc_dg,"width":2.2,"fill":True,"fill_color":acc_dg,"label":"Prix actuel"},
+        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac)",
+           vlines=vlines_dg, show_dot={"x":Sdg,"y":price_dg,"color":acc_dg,"label":f"\u20ac{price_dg:.4f}"},
+           title="Prix selon le spot", responsive=True)
+        svg_dg2 = svg_chart([
+            {"x":list(SRdg),"y":list(delta_curve_dg),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
+        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_dg, hline_zero=True,
+           show_dot={"x":Sdg,"y":Gdg["delta"],"color":"#22c55e","label":f"{Gdg['delta']:.4f}"},
+           title="\u0394 Delta selon le spot - pic au strike", responsive=True)
+        svg_dg3 = svg_chart([
+            {"x":list(SRdg),"y":list(gamma_curve_dg),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
+        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_dg, hline_zero=True,
+           show_dot={"x":Sdg,"y":Gdg["gamma"],"color":"#a78bfa","label":f"{Gdg['gamma']:.5f}"},
+           title="\u0393 Gamma selon le spot", responsive=True)
+
+        cdg1, cdg2 = st.columns(2)
+        with cdg1: show_svg(svg_dg1, full_width=True, title="Prix selon le spot", chart_id="dg_price")
+        with cdg2: show_svg(svg_dg2, full_width=True, title="Delta selon le spot", chart_id="dg_delta")
+        cdg3, _cdg_pad = st.columns(2)
+        with cdg3: show_svg(svg_dg3, full_width=True, title="Gamma selon le spot", chart_id="dg_gamma")
 
 st.markdown("""
 <div style="text-align:center;padding:32px 0 8px;font-size:.64rem;color:#3f3f46;letter-spacing:1px">OPTIONS LAB \u00b7 BLACK-SCHOLES</div>
