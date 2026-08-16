@@ -180,6 +180,75 @@ def digital_greeks(S, K, T, r, sigma, q=0.0, otype="call", style="cash", Q=100.0
     theta = f(S, max(T-hT,1e-6), sigma, r) - p0
     rho   = (f(S,T,sigma,r+hR) - f(S,T,sigma,r-hR)) / (2*hR) / 100
     return dict(delta=delta, gamma=gamma, theta=theta, vega=vega, rho=rho)
+
+
+# ─────────────────────────────────────────────────────────────
+#  BARRIÈRE EUROPÉENNE — formule fermée (spread + digitale), sans Monte-Carlo
+#  Contrairement au monitoring continu (Reiner-Rubinstein) ou discret (correction de
+#  continuité), une barrière européenne n'est vérifiée qu'à l'échéance : le prix se
+#  décompose alors exactement en un spread vanille + une correction digitale, en
+#  réutilisant bs_price et digital_price déjà en place - aucun calcul supplémentaire lourd.
+# ─────────────────────────────────────────────────────────────
+def european_barrier_price(S, K, H, T, r, sigma, q=0.0, otype="call", barrier_dir="up", knock="out", rebate=0.0):
+    otype = str(otype).strip().lower(); barrier_dir = str(barrier_dir).strip().lower(); knock = str(knock).strip().lower()
+    if T <= 1e-9 or sigma <= 1e-9:
+        intrinsic = max(S-K, 0) if otype == "call" else max(K-S, 0)
+        beyond = (S >= H) if barrier_dir == "up" else (S <= H)
+        alive = (not beyond) if knock == "out" else beyond
+        return intrinsic if alive else rebate
+
+    if otype == "call":
+        X = max(K, H)
+        above_region = bs_price(S,X,T,r,sigma,q,"call") + (X-K)*digital_price(S,X,T,r,sigma,q,"call","cash",1.0)
+        below_region = bs_price(S,K,T,r,sigma,q,"call") - above_region
+    else:
+        X = min(K, H)
+        below_region = bs_price(S,X,T,r,sigma,q,"put") + (K-X)*digital_price(S,X,T,r,sigma,q,"put","cash",1.0)
+        above_region = bs_price(S,K,T,r,sigma,q,"put") - below_region
+
+    survive = below_region if barrier_dir == "up" else above_region   # région où le "out" reste vivant
+    trigger = above_region if barrier_dir == "up" else below_region   # région où le "in" s'active
+
+    disc_T = np.exp(-r*T)
+    trig_disc = digital_price(S, H, T, r, sigma, q, "call" if barrier_dir == "up" else "put", "cash", 1.0)
+    if knock == "out":
+        return survive + rebate*trig_disc
+    return trigger + rebate*(disc_T - trig_disc)
+
+
+def priced_barrier(S, K, H, T, r, sigma, q, otype, barrier_dir, knock, rebate=0.0, monitor="continu", n_obs=None):
+    """Enveloppe unique autour des 3 types de monitoring de barrière, pour éviter de dupliquer la
+    logique de dispatch dans chaque famille de produit structuré (Shark Note, Twin Win, Bonus, BRC).
+    - 'continu'  : monitoring américain - formule fermée de Reiner-Rubinstein (barrier_price)
+    - 'discret'  : monitoring bermudien - même formule, barrière corrigée par la correction de
+                   continuité de Broadie-Glasserman-Kou pour n_obs observations
+    - 'echeance' : monitoring européen - formule fermée dédiée (european_barrier_price)
+    """
+    if monitor == "echeance":
+        return european_barrier_price(S, K, H, T, r, sigma, q, otype, barrier_dir, knock, rebate)
+    H_eff = H
+    if monitor == "discret" and n_obs and T > 1e-9 and sigma > 1e-9:
+        beta = 0.5826
+        H_eff = H * np.exp((beta if barrier_dir == "up" else -beta) * sigma * np.sqrt(T/n_obs))
+    return barrier_price(S, K, H_eff, T, r, sigma, q, otype, barrier_dir, knock, rebate)
+
+def priced_barrier_greeks(S, K, H, T, r, sigma, q, otype, barrier_dir, knock, rebate=0.0, monitor="continu", n_obs=None):
+    """Grecques par différences finies au-dessus de priced_barrier, valables pour les 3 types de
+    monitoring (barrier_greeks natif ne couvrait que le cas continu)."""
+    if T <= 1e-9 or sigma <= 1e-9:
+        return dict(delta=0.0, gamma=0.0, theta=0.0, vega=0.0, rho=0.0)
+    f = lambda s, t, vol, rr: priced_barrier(s, K, H, t, rr, vol, q, otype, barrier_dir, knock, rebate, monitor, n_obs)
+    hS = max(S*0.0025, 1e-3); hV = 0.0025; hT = 1/365; hR = 0.0005
+    p0 = f(S, T, sigma, r)
+    delta = (f(S+hS,T,sigma,r) - f(S-hS,T,sigma,r)) / (2*hS)
+    gamma = (f(S+hS,T,sigma,r) - 2*p0 + f(S-hS,T,sigma,r)) / (hS**2)
+    vega  = (f(S,T,sigma+hV,r) - f(S,T,sigma-hV,r)) / (2*hV) / 100
+    theta = f(S, max(T-hT,1e-6), sigma, r) - p0
+    rho   = (f(S,T,sigma,r+hR) - f(S,T,sigma,r-hR)) / (2*hR) / 100
+    return dict(delta=delta, gamma=gamma, theta=theta, vega=vega, rho=rho)
+
+# ─────────────────────────────────────────────────────────────
+#  AUTOCALL / PHOENIX ENGINE — Monte-Carlo (observations discrètes)
 #  Produit path-dependent : rappel et coupon observés à des dates fixes -> pas de formule
 #  fermée, la simulation Monte-Carlo est l'approche standard des desks de produits structurés.
 #  Nombres aléatoires communs (même graine -> mêmes tirages Z) entre appels voisins pour
@@ -270,6 +339,82 @@ def autocall_sensis(S, S_ref, T, n_obs, r, q, sigma, autocall_pct, coupon_pct, p
     delta = (p_s_up - p_s_dn) / (2*hS)
     vega  = (p_v_up - p_v_dn) / (2*hV) / 100
     return delta, vega
+
+
+# ─────────────────────────────────────────────────────────────
+#  WORST-OF — extension multi-actifs corrélés du moteur Autocall ci-dessus
+#  Réutilise exactement la même boucle d'observation (rappel/coupon/protection), en ne
+#  remplaçant que le spot par la PIRE performance normalisée du panier à chaque date -
+#  aucun moteur séparé, coût marginal limité à la simulation corrélée (Cholesky).
+#  Corrélation UNIQUE entre toutes les paires (au lieu d'une matrice complète) et nombre de
+#  tirages réduit par défaut : compromis volontaire pour rester rapide (le bruit MC sur le
+#  prix reste visible via l'IC95% affiché, comme pour l'Autocall mono-actif).
+# ─────────────────────────────────────────────────────────────
+def _worst_of_paths(n_assets, T, n_obs, r, q_tuple, sigma_tuple, corr, n_paths=12000, seed=42):
+    rng = np.random.default_rng(seed)
+    dt = T / n_obs
+    Corr = np.full((n_assets, n_assets), corr); np.fill_diagonal(Corr, 1.0)
+    L = np.linalg.cholesky(Corr)
+    Z = rng.standard_normal((n_paths, n_obs, n_assets)) @ L.T
+    log_perf = np.zeros((n_paths, n_obs, n_assets))
+    for j in range(n_assets):
+        drift = (r - q_tuple[j] - 0.5*sigma_tuple[j]**2) * dt
+        log_perf[:, :, j] = np.cumsum(drift + sigma_tuple[j]*np.sqrt(dt)*Z[:, :, j], axis=1)
+    perf = np.exp(log_perf)             # performance normalisée par actif (1.0 = niveau initial)
+    return perf, perf.min(axis=2)       # (n_paths,n_obs,n_assets) , pire perf. à chaque date (n_paths,n_obs)
+
+@st.cache_data(show_spinner=False)
+def autocall_worst_of_price(n_assets, T, n_obs, r, q_tuple, sigma_tuple, corr,
+                             autocall_pct, coupon_pct, protect_pct, coupon_rate,
+                             step_down_pct=0.0, memory=True, n_paths=12000, seed=42):
+    """Identique à autocall_price, mais les barrières s'appliquent à la PIRE performance
+    normalisée du panier (Worst-of) à chaque date. Retourne en plus la probabilité que chaque
+    actif soit le moins performant à l'échéance - métrique propre au Worst-of."""
+    perf, worst = _worst_of_paths(n_assets, T, n_obs, r, q_tuple, sigma_tuple, corr, n_paths, seed)
+    dt = T / n_obs
+    times = np.arange(1, n_obs+1) * dt
+
+    active = np.ones(n_paths, dtype=bool)
+    memory_missed = np.zeros(n_paths)
+    pv = np.zeros(n_paths)
+    life = np.full(n_paths, T)
+    called_at = np.full(n_paths, -1, dtype=int)
+
+    for i in range(n_obs):
+        Wt = worst[:, i]  # pire performance normalisée du panier (1.0 = niveau initial)
+        disc = np.exp(-r*times[i])
+        ac_barrier = max(autocall_pct - step_down_pct*i, 0.0)
+        cp_barrier = coupon_pct
+
+        coupon_hit = active & (Wt >= cp_barrier)
+        if memory:
+            n_due = memory_missed + 1.0
+            coupon_paid = np.where(coupon_hit, n_due*coupon_rate, 0.0)
+            memory_missed = np.where(active, np.where(coupon_hit, 0.0, memory_missed+1.0), memory_missed)
+        else:
+            coupon_paid = np.where(coupon_hit, coupon_rate, 0.0)
+        pv += np.where(active, coupon_paid, 0.0) * disc
+
+        autocalled = active & (Wt >= ac_barrier)
+        pv += np.where(autocalled, 100.0*disc, 0.0)
+        life = np.where(autocalled, times[i], life)
+        called_at = np.where(autocalled, i, called_at)
+        active = active & ~autocalled
+
+    W_final = worst[:, -1]
+    disc_T = np.exp(-r*T)
+    capital = np.where(W_final >= protect_pct, 100.0, 100.0*W_final)
+    pv += np.where(active, capital*disc_T, 0.0)
+
+    price = float(np.mean(pv))
+    stderr = float(np.std(pv) / np.sqrt(n_paths))
+    proba_call = np.array([float(np.mean(called_at == i)) for i in range(n_obs)])
+    proba_loss = float(np.mean(active & (W_final < protect_pct)))
+    vie_moyenne = float(np.mean(life))
+    final_perf = perf[:, -1, :]
+    worst_idx = np.argmin(final_perf, axis=1)
+    proba_worst_asset = np.array([float(np.mean(worst_idx == j)) for j in range(n_assets)])
+    return price, stderr, proba_call, proba_loss, vie_moyenne, proba_worst_asset
 
 
 def mat_from_ymd(y,m,d): return max(y+m/12+d/365, 1/365)
@@ -535,6 +680,25 @@ def show_svg(svg_str, height=None, full_width=False, title="", chart_id=None):
 # ─────────────────────────────────────────────────────────────
 def section_header(t): st.markdown(f'<div class="sh">{t}</div>', unsafe_allow_html=True)
 def field_label(t): st.markdown(f'<div class="fl">{t}</div>', unsafe_allow_html=True)
+
+def barrier_monitor_selector(key_prefix, T):
+    """Sélecteur de type de monitoring de barrière, partagé par tous les produits à barrière
+    (Shark Note, Twin Win, Bonus Certificate, BRC) pour éviter toute duplication de logique.
+    Retourne (monitor, n_obs) prêts à passer à priced_barrier() / priced_barrier_greeks()."""
+    monitor = st.radio("Type de barrière", ["continu", "discret", "echeance"],
+                       horizontal=True, key=f"{key_prefix}_monitor",
+                       format_func=lambda x: {"continu": "Continue (américaine)",
+                                              "discret": "Discrète (bermudienne)",
+                                              "echeance": "À l'échéance (européenne)"}[x],
+                       help="Détermine à quels instants le franchissement de la barrière est vérifié. "
+                            "Détails dans le glossaire.")
+    n_obs = None
+    if monitor == "discret":
+        freq = st.select_slider("Fréquence d'observation", options=["Quotidienne", "Hebdomadaire", "Mensuelle"],
+                                value="Quotidienne", key=f"{key_prefix}_freq")
+        n_per_year = {"Quotidienne": 252, "Hebdomadaire": 52, "Mensuelle": 12}[freq]
+        n_obs = max(int(round(T * n_per_year)), 1)
+    return monitor, n_obs
 
 def mat_widget(pfx, dy=1, dm=0, dd=0):
     c1,c2,c3 = st.columns(3)
@@ -2052,14 +2216,27 @@ with tab5:
         "sur une option knock-out (qui, sans rebate, ne vaut alors plus rien). "
         "Réduit la perte totale liée au déclenchement de la barrière, moyennant une prime légèrement plus élevée.",
         "#eab308", "234,179,8")
-    cards4 += gls_card("MC", "Monitoring Continu", "Hypothèse de calcul",
-        "Hypothèse selon laquelle le franchissement de la barrière est surveillé <b>en continu</b> "
-        "(à chaque instant), et non à des dates fixes (monitoring discret, ex. fixing quotidien en clôture). "
-        "C'est l'hypothèse retenue par la formule fermée de Reiner-Rubinstein utilisée dans cet onglet - "
-        "en pratique, un monitoring discret réduit légèrement la probabilité de déclenchement. La case "
-        "\u00ab Monitoring discret \u00bb de l'onglet Shark Note applique la correction de continuité de "
-        "Broadie-Glasserman-Kou (1997) pour en tenir compte sans sortir du cadre de la formule fermée.",
+    cards4 += gls_card("US", "Barrière Américaine (continue)", "Monitoring en continu",
+        "Le franchissement de la barrière est surveillé <b>à chaque instant</b> entre aujourd'hui et l'échéance. "
+        "C'est l'hypothèse de la formule fermée de Reiner-Rubinstein (1991) utilisée par défaut dans cet onglet, "
+        "et la plus prudente pour l'émetteur : c'est le mode où la barrière a le plus de chances d'être touchée, "
+        "donc où une option knock-out vaut le moins cher.",
         "#3b82f6", "59,130,246")
+    cards4 += gls_card("BM", "Barrière Bermudienne (discrète)", "Monitoring à dates fixes",
+        "Le franchissement n'est vérifié qu'à des <b>dates fixes</b> (ex. chaque jour à la clôture, chaque "
+        "semaine, chaque mois), pas en continu. C'est le cas le plus réaliste en pratique (un fixing quotidien "
+        "est la norme sur les produits à barrière), et aussi le mode de l'Autocall/Phoenix par construction. "
+        "Approximé ici via la correction de continuité de Broadie-Glasserman-Kou (1997), qui décale H d'un "
+        "facteur exp(\u00b10.5826\u00b7\u03c3\u00b7\u221a(T/n)) (n = nombre d'observations) pour rester dans le "
+        "cadre de la formule fermée sans simulation.",
+        "#f59e0b", "245,158,11")
+    cards4 += gls_card("EU", "Barrière Européenne", "Monitoring à l'échéance seule",
+        "Le franchissement n'est vérifié <b>qu'une seule fois, à l'échéance</b> - aucun contrôle en cours de "
+        "vie. C'est le mode le moins strict pour l'investisseur (la barrière a le moins de chances d'être "
+        "considérée comme touchée), et le seul des trois qui admet une formule fermée exacte sans aucune "
+        "approximation (décomposition en spread vanille + option digitale, sans lien avec le nombre "
+        "d'observations).",
+        "#22c55e", "34,197,94")
     cards4 += gls_card("\u26a0", "Risque de couverture", "Delta/Gamma près de H",
         "Près de la barrière, le Delta et le Gamma d'une option à barrière peuvent devenir extrêmement "
         "élevés et changer de signe brutalement (profil en \"nageoire\"). C'est un risque de couverture bien connu "
@@ -2118,6 +2295,13 @@ with tab5:
         "(pour 1 unité de sous-jacent) : le rendement du dividende q réduit sa valeur, car le détenteur du "
         "certificat ne perçoit pas les dividendes versés par l'action sous-jacente.",
         "#3b82f6", "59,130,246")
+    cards4 += gls_card("WO", "Worst-of", "Barrière sur le pire actif du panier",
+        "Variante multi-actifs (généralement 2 ou 3) d'un produit à barrière ou d'un autocall, où les "
+        "barrières s'appliquent au sous-jacent <b>le moins performant</b> du panier à chaque date, et non à un "
+        "seul actif. Structure très répandue en pratique (souvent moins chère à produire pour l'émetteur, donc "
+        "plus rémunératrice pour l'investisseur), mais plus risquée : une <b>corrélation basse</b> entre les "
+        "actifs augmente la dispersion, donc la probabilité qu'au moins l'un d'eux décroche loin des autres.",
+        "#ef4444", "239,68,68")
     st.markdown(f'<div class="gls-grid">{cards4}</div>', unsafe_allow_html=True)
 
 with tab4:
@@ -2214,12 +2398,7 @@ with tab4:
         field_label("Volatilité \u03c3 (%)")
         sigb = st.slider("sigb", 1.0, 150.0, 25.0, 0.5, key="bo_sigma", label_visibility="collapsed") / 100
 
-        discrete_monitor = st.checkbox(
-            "Monitoring discret (quotidien)",
-            value=False, key="bo_discrete",
-            help="La formule utilisée suppose un monitoring continu de la barrière. En pratique (fixing "
-                 "quotidien), la barrière est un peu moins souvent touchée : cette option corrige le prix "
-                 "en conséquence. Détails dans le glossaire (\u00ab Monitoring Continu \u00bb).")
+        monitor_b, n_obs_b = barrier_monitor_selector("bo", Tb)
 
         invalid = (b_dir == "up" and Hb <= Sb) or (b_dir == "down" and Hb >= Sb)
         if invalid:
@@ -2227,17 +2406,8 @@ with tab4:
             st.warning(f"Pour une barrière '{'Up' if b_dir=='up' else 'Down'}', H doit être {side} "
                       f"(H={Hb:.1f} vs S={Sb:.1f}).")
         else:
-            if discrete_monitor:
-                n_obs = max(int(round(Tb * 252)), 1)
-                _beta = 0.5826  # constante de Broadie-Glasserman-Kou (1997)
-                _corr = np.exp((_beta if b_dir == "up" else -_beta) * sigb * np.sqrt(Tb / n_obs))
-                Hb_calc = Hb * _corr
-            else:
-                n_obs = None
-                Hb_calc = Hb
-
-            price = barrier_price(Sb, Kb, Hb_calc, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)
-            Gb = barrier_greeks(Sb, Kb, Hb_calc, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb)
+            price = priced_barrier(Sb, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb, monitor_b, n_obs_b)
+            Gb = priced_barrier_greeks(Sb, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb, monitor_b, n_obs_b)
             vanilla_ref = bs_price(Sb, Kb, Tb, rb, sigb, qb, b_otype)
             reduction = (1 - price/vanilla_ref)*100 if vanilla_ref > 1e-9 else 0.0
 
@@ -2254,7 +2424,7 @@ with tab4:
                     <div class="ph-row"><span class="ph-val">{price:.4f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
                     <div class="ph-sub">
                       <span>Vanille \u00e9quiv. = \u20ac{vanilla_ref:.4f}</span><span>{'Réduction' if reduction>=0 else 'Surcote'} = {reduction:+.1f}%</span>
-                      <span>H = {Hb:.1f}{f' (H eff. = {Hb_calc:.2f})' if discrete_monitor else ''}</span><span>Rebate = \u20ac{Rb:.2f}</span>
+                      <span>H = {Hb:.1f}</span><span>Rebate = \u20ac{Rb:.2f}</span>
                     </div>
                   </div>
                   <span class="ph-badge {badge_class}">{badge_text}</span>
@@ -2276,16 +2446,16 @@ with tab4:
 
             section_header("Visualisations")
             Nb = 220
-            lo = min(Sb, Hb_calc) * 0.6
-            hi = max(Sb, Hb_calc) * 1.25
+            lo = min(Sb, Hb) * 0.6
+            hi = max(Sb, Hb) * 1.25
             SRb = np.linspace(max(lo, 1), hi, Nb)
-            price_curve = np.array([barrier_price(s, Kb, Hb_calc, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb) for s in SRb])
-            greeks_curve_b = [barrier_greeks(s, Kb, Hb_calc, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb) for s in SRb]
+            price_curve = np.array([priced_barrier(s, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb, monitor_b, n_obs_b) for s in SRb])
+            greeks_curve_b = [priced_barrier_greeks(s, Kb, Hb, Tb, rb, sigb, qb, b_otype, b_dir, b_knock, Rb, monitor_b, n_obs_b) for s in SRb]
             delta_curve = np.array([g["delta"] for g in greeks_curve_b])
             gamma_curve = np.array([g["gamma"] for g in greeks_curve_b])
 
             sigRb = np.linspace(0.02, 1.0, Nb)
-            price_vs_vol = np.array([barrier_price(Sb, Kb, Hb_calc, Tb, rb, s, qb, b_otype, b_dir, b_knock, Rb) for s in sigRb])
+            price_vs_vol = np.array([priced_barrier(Sb, Kb, Hb, Tb, rb, s, qb, b_otype, b_dir, b_knock, Rb, monitor_b, n_obs_b) for s in sigRb])
             vanilla_vs_vol = np.array([bs_price(Sb, Kb, Tb, rb, s, qb, b_otype) for s in sigRb])
 
             acc = "#06b6d4" if b_otype == "call" else "#f472b6"
@@ -2293,8 +2463,6 @@ with tab4:
             _hvlines = [{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
                         {"x":Kb,"color":"#52525b","label":f"K={Kb:.0f}","dash":True},
                         {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}]
-            if discrete_monitor:
-                _hvlines.append({"x":Hb_calc,"color":"#f59e0b","label":f"H eff.={Hb_calc:.1f}","dash":True})
 
             svg_bo1 = svg_chart([
                 {"x":list(SRb),"y":list(price_curve),"color":acc,"width":2.2,"fill":True,"fill_color":acc,"label":"Prix barrière"},
@@ -2307,7 +2475,7 @@ with tab4:
                 {"x":list(SRb),"y":list(delta_curve),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta",
                vlines=[{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
-                       {"x":Hb_calc,"color":"#ef4444","label":f"H={Hb_calc:.0f}","dash":True}],
+                       {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}],
                hline_zero=True,
                show_dot={"x":Sb,"y":Gb["delta"],"color":"#22c55e","label":f"{Gb['delta']:.4f}"},
                title="\u0394 Delta selon le spot", responsive=True)
@@ -2316,7 +2484,7 @@ with tab4:
                 {"x":list(SRb),"y":list(gamma_curve),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
             ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma",
                vlines=[{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
-                       {"x":Hb_calc,"color":"#ef4444","label":f"H={Hb_calc:.0f}","dash":True}],
+                       {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}],
                hline_zero=True,
                show_dot={"x":Sb,"y":Gb["gamma"],"color":"#a78bfa","label":f"{Gb['gamma']:.5f}"},
                title="\u0393 Gamma selon le spot - pic près de H", responsive=True)
@@ -2354,17 +2522,20 @@ with tab4:
     elif prod_family == "twin_win":
         st.markdown('<div class="card" style="margin-bottom:14px;font-size:.77rem;color:#d4d4d8;line-height:1.7">'
                     '<b>Twin Win</b> - l\'investisseur gagne <b>que le sous-jacent monte ou baisse</b>, '
-                    'tant qu\'une barrière n\'est pas touchée : la performance absolue est payée dans les deux sens. '
-                    'Si la barrière est franchie, le "gain sur la baisse" (ou sur la hausse, selon la barrière) disparaît - '
-                    'le capital reste protégé, mais on perd la composante "twin". Réplication : Zéro-coupon + Call(K=S\u2080) '
-                    '+ Put(K=S\u2080), chaque jambe utilisant le moteur validé ci-dessus '
-                    '(aucune nouvelle formule - seulement une combinaison de briques déjà vérifiées).</div>',
+                    'comme un straddle long (call + put au même strike) : la performance absolue est payée dans '
+                    'les deux sens. Les barrières ne \u00ab protègent \u00bb pas ce gain - elles le <b>plafonnent</b> : '
+                    'si la barrière basse est franchie, la note cesse de gagner davantage en cas de baisse '
+                    'supplémentaire (elle reste toutefois adossée au zéro-coupon, qui protège le capital investi). '
+                    'C\'est ce plafonnement qui permet à l\'émetteur de proposer la structure moins cher qu\'un '
+                    'straddle sans barrière. Réplication : Zéro-coupon + Call(K=S\u2080) + Put(K=S\u2080), chaque jambe '
+                    'utilisant le moteur validé ci-dessus (aucune nouvelle formule - seulement une combinaison de '
+                    'briques déjà vérifiées).</div>',
                     unsafe_allow_html=True)
 
         section_header("Barrières actives")
         twc1, twc2 = st.columns(2)
         with twc1:
-            tw_low_active = st.checkbox("Barrière basse (protège le 'gain sur la baisse')", value=True, key="tw_low_active")
+            tw_low_active = st.checkbox("Barrière basse (plafonne le 'gain sur la baisse')", value=True, key="tw_low_active")
         with twc2:
             tw_high_active = st.checkbox("Barrière haute (plafonne le 'gain sur la hausse')", value=False, key="tw_high_active")
         if not tw_low_active and not tw_high_active:
@@ -2406,6 +2577,9 @@ with tab4:
         field_label("Volatilité \u03c3 (%)")
         sigtw = st.slider("sigtw", 1.0, 150.0, 25.0, 0.5, key="tw_sigma", label_visibility="collapsed") / 100
 
+        monitor_tw, n_obs_tw = (barrier_monitor_selector("tw", Ttw) if (tw_low_active or tw_high_active)
+                                else ("continu", None))
+
         _tw_invalid = (tw_low_active and H_low >= Stw) or (tw_high_active and H_high <= Stw)
         if _tw_invalid:
             st.warning("La barrière basse doit être strictement inférieure au spot, "
@@ -2413,12 +2587,12 @@ with tab4:
         else:
             def _tw_call_leg(S, T, r, sigma, q, rebate=R_high):
                 if tw_high_active:
-                    return barrier_price(S, Stw, H_high, T, r, sigma, q, "call", "up", "out", rebate)
+                    return priced_barrier(S, Stw, H_high, T, r, sigma, q, "call", "up", "out", rebate, monitor_tw, n_obs_tw)
                 return bs_price(S, Stw, T, r, sigma, q, "call")
 
             def _tw_put_leg(S, T, r, sigma, q, rebate=R_low):
                 if tw_low_active:
-                    return barrier_price(S, Stw, H_low, T, r, sigma, q, "put", "down", "out", rebate)
+                    return priced_barrier(S, Stw, H_low, T, r, sigma, q, "put", "down", "out", rebate, monitor_tw, n_obs_tw)
                 return bs_price(S, Stw, T, r, sigma, q, "put")
 
             def _tw_note_price(S, T, r, sigma, q):
@@ -2441,8 +2615,8 @@ with tab4:
             price_tw = _tw_note_price(Stw, Ttw, rtw, sigtw, qtw)
             Gtw = _tw_note_greeks(Stw, Ttw, rtw, sigtw, qtw)
             price_tw_norebate = 100*np.exp(-rtw*Ttw) + Ptw*(
-                (bs_price(Stw,Stw,Ttw,rtw,sigtw,qtw,"call") if not tw_high_active else barrier_price(Stw,Stw,H_high,Ttw,rtw,sigtw,qtw,"call","up","out",0)) +
-                (bs_price(Stw,Stw,Ttw,rtw,sigtw,qtw,"put") if not tw_low_active else barrier_price(Stw,Stw,H_low,Ttw,rtw,sigtw,qtw,"put","down","out",0)))
+                (bs_price(Stw,Stw,Ttw,rtw,sigtw,qtw,"call") if not tw_high_active else priced_barrier(Stw,Stw,H_high,Ttw,rtw,sigtw,qtw,"call","up","out",0,monitor_tw,n_obs_tw)) +
+                (bs_price(Stw,Stw,Ttw,rtw,sigtw,qtw,"put") if not tw_low_active else priced_barrier(Stw,Stw,H_low,Ttw,rtw,sigtw,qtw,"put","down","out",0,monitor_tw,n_obs_tw)))
             rebate_impact = price_tw - price_tw_norebate
 
             st.markdown("---")
@@ -2681,6 +2855,33 @@ with tab4:
                     '(sensibilités lissées malgré le bruit de simulation).</div>',
                     unsafe_allow_html=True)
 
+        worst_of_ac = st.checkbox("Worst-of (plusieurs sous-jacents)", value=False, key="ac_worst_of",
+                                  help="Les barrières s'appliquent alors au sous-jacent le MOINS performant du "
+                                       "panier à chaque date - structure très répandue en pratique, mais plus "
+                                       "risquée (et donc moins chère) qu'un autocall mono-actif, du fait de la "
+                                       "dispersion entre actifs.")
+        n_assets_ac = 1
+        sigma_list_ac, q_list_ac, corr_ac = [0.25], [0.0], 0.5
+        if worst_of_ac:
+            st.markdown('<div style="font-size:.72rem;color:var(--t3);margin:-4px 0 10px;line-height:1.5">'
+                       'Par simplicité, les 2 ou 3 actifs sont supposés partir du <b>même niveau normalisé</b> '
+                       '(100% chacun) - seules leur volatilité, leur dividende et leur corrélation diffèrent. '
+                       'Sans lien de dépendance vers un spot courant unique, la courbe de repricing '
+                       '\u00ab prix vs spot \u00bb ci-dessous est remplacée par une courbe \u00ab prix vs '
+                       'corrélation \u00bb, propre au Worst-of.</div>', unsafe_allow_html=True)
+            n_assets_ac = st.radio("Nombre de sous-jacents", [2, 3], horizontal=True, key="ac_nassets")
+            asset_cols = st.columns(n_assets_ac)
+            sigma_list_ac, q_list_ac = [], []
+            for j, col in enumerate(asset_cols):
+                with col:
+                    st.markdown(f'<div class="fl">Actif {j+1}</div>', unsafe_allow_html=True)
+                    sj = st.slider(f"\u03c3 actif {j+1} (%)", 5, 100, 20+j*7, 1, key=f"ac_sig{j}") / 100
+                    qj = st.slider(f"q actif {j+1} (%)", 0.0, 15.0, 0.0, 0.5, key=f"ac_q{j}") / 100
+                    sigma_list_ac.append(sj); q_list_ac.append(qj)
+            corr_ac = st.slider("Corrélation moyenne entre actifs", 0.0, 0.95, 0.5, 0.05, key="ac_corr",
+                                help="Corrélation appliquée uniformément entre chaque paire d'actifs. Plus elle "
+                                     "est basse, plus les actifs se dispersent - et plus le Worst-of est risqué.")
+
         section_header("Paramètres")
         acp1, acp2, acp3 = st.columns(3)
         with acp1:
@@ -2726,23 +2927,42 @@ with tab4:
         with acp11:
             r_ac = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="ac_r") / 100
         with acp12:
-            q_ac = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="ac_q") / 100
-        field_label("Volatilité \u03c3 (%)")
-        sig_ac = st.slider("sigac", 1.0, 150.0, 25.0, 0.5, key="ac_sigma", label_visibility="collapsed") / 100
+            if not worst_of_ac:
+                q_ac = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="ac_q") / 100
+            else:
+                q_ac = None
+                st.markdown('<div class="fl">Dividende q</div><div style="font-size:.72rem;color:var(--t3);'
+                           'padding-top:6px">Défini par actif ci-dessus</div>', unsafe_allow_html=True)
+        if not worst_of_ac:
+            field_label("Volatilité \u03c3 (%)")
+            sig_ac = st.slider("sigac", 1.0, 150.0, 25.0, 0.5, key="ac_sigma", label_visibility="collapsed") / 100
+        else:
+            sig_ac = None
 
         if coupon_pct > autocall_pct:
             st.warning("La barrière de coupon est en général inférieure ou égale à la barrière de rappel "
                       "(sinon la note serait toujours rappelée avant de pouvoir simplement verser un coupon).")
 
         # Carte principale : spot courant = spot de référence (note fraîchement émise, "at the money")
-        _ac_args = (S_ac, S_ac, T_ac, n_obs_ac, r_ac, q_ac, sig_ac, autocall_pct, coupon_pct, protect_pct,
-                    coupon_rate_pct*100, step_down, memory_ac, n_paths_ac)
-        price_ac, stderr_ac, proba_call_ac, proba_loss_ac, vie_ac = autocall_price(*_ac_args)
-        delta_ac, vega_ac = autocall_sensis(*_ac_args)
+        if not worst_of_ac:
+            _ac_args = (S_ac, S_ac, T_ac, n_obs_ac, r_ac, q_ac, sig_ac, autocall_pct, coupon_pct, protect_pct,
+                        coupon_rate_pct*100, step_down, memory_ac, n_paths_ac)
+            price_ac, stderr_ac, proba_call_ac, proba_loss_ac, vie_ac = autocall_price(*_ac_args)
+            delta_ac, vega_ac = autocall_sensis(*_ac_args)
+            proba_worst_asset_ac = None
+        else:
+            _wo_args = (n_assets_ac, T_ac, n_obs_ac, r_ac, tuple(q_list_ac), tuple(sigma_list_ac), corr_ac,
+                        autocall_pct, coupon_pct, protect_pct, coupon_rate_pct*100, step_down, memory_ac, n_paths_ac)
+            price_ac, stderr_ac, proba_call_ac, proba_loss_ac, vie_ac, proba_worst_asset_ac = autocall_worst_of_price(*_wo_args)
+            # Sensibilité à la corrélation (métrique propre au Worst-of, mêmes tirages -> peu de bruit MC)
+            price_corr_up = autocall_worst_of_price(*(_wo_args[:6] + (min(corr_ac+0.1,0.95),) + _wo_args[7:]))[0]
+            price_corr_dn = autocall_worst_of_price(*(_wo_args[:6] + (max(corr_ac-0.1,0.0),) + _wo_args[7:]))[0]
+            delta_ac = vega_ac = None
         ic95_ac = 1.96 * stderr_ac
 
         st.markdown("---")
         badge_text_ac = "PHOENIX" if coupon_pct < autocall_pct else "AUTOCALL"
+        if worst_of_ac: badge_text_ac = "WORST-OF " + badge_text_ac
         hero_col, greeks_col = st.columns([5, 7], gap="large")
         with hero_col:
             st.markdown(f"""
@@ -2758,17 +2978,32 @@ with tab4:
               <span class="ph-badge ph-c">{badge_text_ac}</span>
             </div>""", unsafe_allow_html=True)
         with greeks_col:
-            section_header("Sensibilités (Monte-Carlo, nombres aléatoires communs)")
-            gdata_ac = [("\u0394", "Delta", delta_ac, ".4f", "#22c55e", "Sensibilité au spot"),
-                        ("\u03bd", "Vega", vega_ac, ".4f", "#3b82f6", "Effet volatilité (\u20ac/%)")]
-            cards_html_ac = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_ac)
-            st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(2,1fr)">{cards_html_ac}</div>',
-                       unsafe_allow_html=True)
-            st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
-                       'Contrairement aux Grecques fermées du reste de l\'application, Delta et Vega sont ici estimés '
-                       'par différences finies <b>Monte-Carlo à nombres aléatoires communs</b> (même graine de tirage '
-                       'pour S\u2080\u00b1h) : cela annule l\'essentiel du bruit de simulation dans la différence.</div>',
-                       unsafe_allow_html=True)
+            if not worst_of_ac:
+                section_header("Sensibilités (Monte-Carlo, nombres aléatoires communs)")
+                gdata_ac = [("\u0394", "Delta", delta_ac, ".4f", "#22c55e", "Sensibilité au spot"),
+                            ("\u03bd", "Vega", vega_ac, ".4f", "#3b82f6", "Effet volatilité (\u20ac/%)")]
+                cards_html_ac = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_ac)
+                st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(2,1fr)">{cards_html_ac}</div>',
+                           unsafe_allow_html=True)
+                st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                           'Contrairement aux Grecques fermées du reste de l\'application, Delta et Vega sont ici estimés '
+                           'par différences finies <b>Monte-Carlo à nombres aléatoires communs</b> (même graine de tirage '
+                           'pour S\u2080\u00b1h) : cela annule l\'essentiel du bruit de simulation dans la différence.</div>',
+                           unsafe_allow_html=True)
+            else:
+                section_header("Sensibilité à la corrélation & risque de dispersion")
+                gdata_wo = [("\u03c1+", "Corr. +10pts", price_corr_up-price_ac, "+.3f", "#22c55e", "Impact sur le prix (\u20ac)"),
+                            ("\u03c1-", "Corr. \u221210pts", price_corr_dn-price_ac, "+.3f", "#ef4444", "Impact sur le prix (\u20ac)")]
+                cards_html_wo = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_wo)
+                st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(2,1fr)">{cards_html_wo}</div>',
+                           unsafe_allow_html=True)
+                _pw_html = ''.join(f'<span style="margin-right:14px">Actif {j+1} : <b>{p*100:.1f}%</b></span>'
+                                   for j,p in enumerate(proba_worst_asset_ac))
+                st.markdown(f'<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                           f'Une corrélation plus élevée <b>augmente</b> le prix (les actifs bougent ensemble, moins '
+                           f'de risque que l\'un d\'eux décroche seul) - c\'est l\'inverse de l\'intuition d\'un '
+                           f'straddle. Probabilité que chaque actif soit le moins performant à l\'échéance : '
+                           f'{_pw_html}</div>', unsafe_allow_html=True)
 
         section_header("Calendrier de rappel - probabilités par date d'observation")
         _rows_ac = ""
@@ -2795,39 +3030,65 @@ with tab4:
                    f'(perte en capital).</div>', unsafe_allow_html=True)
 
         section_header("Visualisations")
-        _n_grid_ac = 15
-        _n_paths_curve = min(n_paths_ac, 8000)
-        SRac = np.linspace(max(S_ac*0.5, 1), S_ac*1.5, _n_grid_ac)
-        # S_ref = S_ac reste FIXE (barrières en absolu inchangées) ; seul le spot courant "s" varie -
-        # c'est la sensibilité utile pour reprice/couvrir une note déjà émise, comme pour les autres produits.
-        price_curve_ac = np.array([
-            autocall_price(s, S_ac, T_ac, n_obs_ac, r_ac, q_ac, sig_ac, autocall_pct, coupon_pct, protect_pct,
-                           coupon_rate_pct*100, step_down, memory_ac, _n_paths_curve)[0]
-            for s in SRac])
-        payoff_never_called_ac = np.where(SRac >= S_ac*protect_pct, 100.0, 100.0*SRac/S_ac)
+        if not worst_of_ac:
+            _n_grid_ac = 15
+            _n_paths_curve = min(n_paths_ac, 8000)
+            SRac = np.linspace(max(S_ac*0.5, 1), S_ac*1.5, _n_grid_ac)
+            # S_ref = S_ac reste FIXE (barrières en absolu inchangées) ; seul le spot courant "s" varie -
+            # c'est la sensibilité utile pour reprice/couvrir une note déjà émise, comme pour les autres produits.
+            price_curve_ac = np.array([
+                autocall_price(s, S_ac, T_ac, n_obs_ac, r_ac, q_ac, sig_ac, autocall_pct, coupon_pct, protect_pct,
+                               coupon_rate_pct*100, step_down, memory_ac, _n_paths_curve)[0]
+                for s in SRac])
+            payoff_never_called_ac = np.where(SRac >= S_ac*protect_pct, 100.0, 100.0*SRac/S_ac)
 
-        svg_ac1 = svg_chart([
-            {"x":list(SRac),"y":list(payoff_never_called_ac),"color":"#3f3f46","width":1.6,"dash":True,
-             "label":"Si jamais rappelée (référence à maturité)"},
-            {"x":list(SRac),"y":list(price_curve_ac),"color":"#c084fc","width":2.2,"fill":True,"fill_color":"#c084fc",
-             "label":"Prix actuel de la note (Monte-Carlo)"},
-        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
-           vlines=[{"x":S_ac,"color":"#3b82f6","label":f"S\u2080={S_ac:.0f}","dash":True},
-                   {"x":S_ac*protect_pct,"color":"#ef4444","label":f"Protection={S_ac*protect_pct:.0f}","dash":True},
-                   {"x":S_ac*coupon_pct,"color":"#f59e0b","label":f"Coupon={S_ac*coupon_pct:.0f}","dash":True},
-                   {"x":S_ac*autocall_pct,"color":"#22c55e","label":f"Rappel={S_ac*autocall_pct:.0f}","dash":True}],
-           show_dot={"x":S_ac,"y":price_ac,"color":"#c084fc","label":f"\u20ac{price_ac:.3f}"},
-           title="Prix de la note selon le spot de départ", responsive=True)
-        show_svg(svg_ac1, full_width=True, title="Prix de la note selon le spot", chart_id="ac_price")
+            svg_ac1 = svg_chart([
+                {"x":list(SRac),"y":list(payoff_never_called_ac),"color":"#3f3f46","width":1.6,"dash":True,
+                 "label":"Si jamais rappelée (référence à maturité)"},
+                {"x":list(SRac),"y":list(price_curve_ac),"color":"#c084fc","width":2.2,"fill":True,"fill_color":"#c084fc",
+                 "label":"Prix actuel de la note (Monte-Carlo)"},
+            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+               vlines=[{"x":S_ac,"color":"#3b82f6","label":f"S\u2080={S_ac:.0f}","dash":True},
+                       {"x":S_ac*protect_pct,"color":"#ef4444","label":f"Protection={S_ac*protect_pct:.0f}","dash":True},
+                       {"x":S_ac*coupon_pct,"color":"#f59e0b","label":f"Coupon={S_ac*coupon_pct:.0f}","dash":True},
+                       {"x":S_ac*autocall_pct,"color":"#22c55e","label":f"Rappel={S_ac*autocall_pct:.0f}","dash":True}],
+               show_dot={"x":S_ac,"y":price_ac,"color":"#c084fc","label":f"\u20ac{price_ac:.3f}"},
+               title="Prix de la note selon le spot de départ", responsive=True)
+            show_svg(svg_ac1, full_width=True, title="Prix de la note selon le spot", chart_id="ac_price")
 
-        st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
-                   'Les barrières restent fixées en absolu (au niveau S\u2080 de référence saisi ci-dessus) ; seul le '
-                   '<b>spot courant</b> varie ici, exactement comme pour les produits à barrière et le Twin Win '
-                   'ci-dessus - ce qui permet de repricer/couvrir une note déjà émise. Le prix (violet) reste proche '
-                   'de 100 tant que les barrières de rappel/coupon restent atteignables depuis le spot courant, et '
-                   'se rapproche de la ligne pointillée (valeur si jamais rappelée) quand le spot s\'effondre '
-                   'sous la barrière de protection.</div>',
-                   unsafe_allow_html=True)
+            st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
+                       'Les barrières restent fixées en absolu (au niveau S\u2080 de référence saisi ci-dessus) ; seul le '
+                       '<b>spot courant</b> varie ici, exactement comme pour les produits à barrière et le Twin Win '
+                       'ci-dessus - ce qui permet de repricer/couvrir une note déjà émise. Le prix (violet) reste proche '
+                       'de 100 tant que les barrières de rappel/coupon restent atteignables depuis le spot courant, et '
+                       'se rapproche de la ligne pointillée (valeur si jamais rappelée) quand le spot s\'effondre '
+                       'sous la barrière de protection.</div>',
+                       unsafe_allow_html=True)
+        else:
+            _n_paths_curve_wo = min(n_paths_ac, 6000)
+            corr_grid = np.linspace(0.0, 0.95, 12)
+            price_vs_corr = np.array([
+                autocall_worst_of_price(n_assets_ac, T_ac, n_obs_ac, r_ac, tuple(q_list_ac), tuple(sigma_list_ac), c,
+                                        autocall_pct, coupon_pct, protect_pct, coupon_rate_pct*100, step_down,
+                                        memory_ac, _n_paths_curve_wo)[0]
+                for c in corr_grid])
+
+            svg_wo1 = svg_chart([
+                {"x":list(corr_grid*100),"y":list(price_vs_corr),"color":"#c084fc","width":2.2,"fill":True,"fill_color":"#c084fc",
+                 "label":"Prix de la note"},
+            ], W=680, H=260, xlabel="Corrélation moyenne entre actifs (%)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+               vlines=[{"x":corr_ac*100,"color":"#3b82f6","label":f"\u03c1={corr_ac*100:.0f}%","dash":True}],
+               show_dot={"x":corr_ac*100,"y":price_ac,"color":"#c084fc","label":f"\u20ac{price_ac:.3f}"},
+               title="Prix de la note selon la corrélation entre actifs", responsive=True)
+            show_svg(svg_wo1, full_width=True, title="Prix selon la corrélation", chart_id="ac_price_corr")
+
+            st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
+                       'Sur un Worst-of, le prix <b>augmente avec la corrélation</b> : plus les actifs bougent '
+                       'ensemble, moins il y a de risque qu\'un seul d\'entre eux décroche loin des autres et '
+                       'tire le \u00ab pire \u00bb vers le bas. À la limite \u03c1\u2192100%, un Worst-of se '
+                       'comporte comme un autocall mono-actif ; à \u03c1 bas, la dispersion entre actifs domine '
+                       'et le prix chute nettement en dessous de cette référence.</div>',
+                       unsafe_allow_html=True)
 
     # ═══════════════════ REVERSE CONVERTIBLE / BRC ═══════════════════
     elif prod_family == "reverse_convertible":
@@ -2869,19 +3130,21 @@ with tab4:
                                                  else "Barrier Reverse Convertible (avec barrière)")
         barrier_on_rc = (rc_type == "brc")
         Hrc = Krc * 0.7
+        monitor_rc, n_obs_rc = "continu", None
         if barrier_on_rc:
             Hrc = st.slider("Barrière de protection H (% du strike K)", 50, 99, 70, 1, key="rc_h") / 100 * Krc
+            monitor_rc, n_obs_rc = barrier_monitor_selector("rc", Trc)
 
         if barrier_on_rc and Hrc >= Krc:
             st.warning("La barrière de protection H doit être strictement inférieure au strike K.")
         else:
             def _rc_price(S, T, sigma, r):
-                pr = (barrier_price(S, Krc, Hrc, T, r, sigma, q_rc, "put", "down", "in", 0.0) if barrier_on_rc
+                pr = (priced_barrier(S, Krc, Hrc, T, r, sigma, q_rc, "put", "down", "in", 0.0, monitor_rc, n_obs_rc) if barrier_on_rc
                       else bs_price(S, Krc, T, r, sigma, q_rc, "put"))
                 return (100 + coupon_rc*100*T) * np.exp(-r*T) - (100/Krc)*pr
 
             coupon_total = coupon_rc * 100 * Trc
-            put_rc = (barrier_price(Src, Krc, Hrc, Trc, r_rc, sigrc, q_rc, "put", "down", "in", 0.0) if barrier_on_rc
+            put_rc = (priced_barrier(Src, Krc, Hrc, Trc, r_rc, sigrc, q_rc, "put", "down", "in", 0.0, monitor_rc, n_obs_rc) if barrier_on_rc
                       else bs_price(Src, Krc, Trc, r_rc, sigrc, q_rc, "put"))
             price_rc = _rc_price(Src, Trc, sigrc, r_rc)
 
@@ -2991,6 +3254,8 @@ with tab4:
             field_label("Volatilité \u03c3 (%)")
             sigbn = st.slider("sigbn", 1.0, 150.0, 25.0, 0.5, key="bn_sigma", label_visibility="collapsed") / 100
 
+        monitor_bn, n_obs_bn = barrier_monitor_selector("bn", Tbn)
+
         if Hbn >= Sbn:
             st.warning("La barrière H doit être strictement inférieure au spot S\u2080.")
         elif Bbn < Sbn:
@@ -2998,7 +3263,7 @@ with tab4:
         else:
             def _bn_price(S, T, sigma, r):
                 tracker = (S/Sbn)*100*np.exp(-q_bn*T)
-                put_dno = barrier_price(S, Bbn, Hbn, T, r, sigma, q_bn, "put", "down", "out", 0.0)
+                put_dno = priced_barrier(S, Bbn, Hbn, T, r, sigma, q_bn, "put", "down", "out", 0.0, monitor_bn, n_obs_bn)
                 return tracker + (100/Sbn)*put_dno
 
             price_bn = _bn_price(Sbn, Tbn, sigbn, r_bn)
