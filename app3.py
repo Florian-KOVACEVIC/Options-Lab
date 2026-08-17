@@ -1349,7 +1349,7 @@ with st.sidebar:
     st.session_state["shared_q"] = q_div * 100
 
     field_label("Volatilité  \u03c3  (%)")
-    sigma = st.slider("sg", 1.0, 150.0,
+    sigma = st.slider("sg", 1.0, 100.0,
                       float(st.session_state.get("shared_sigma", 20.0)), 0.5,
                       label_visibility="collapsed",
                       help="Volatilité implicite annualisé.", key="t1_sigma") / 100
