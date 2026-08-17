@@ -1471,7 +1471,7 @@ $$d_1 = \frac{\ln(S/K) + (r - q + \sigma^2/2)\,T}{\sigma\sqrt{T}} \qquad d_2 = d
 
     # ── Visualisations pleine largeur ────────────────────────
     section_header("Visualisations")
-    svg1,svg2,svg3,svg4,svg5 = build_dashboard(S,K,T,r,sigma,q_div,otype,pos_sign)
+    svg1 ,svg2 ,svg3 ,svg4 ,svg5 = build_dashboard(S,K,T,r,sigma,q_div,otype,pos_sign)
 
     # Ligne 1
     chart_r1c1, chart_r1c2 = st.columns(2)
