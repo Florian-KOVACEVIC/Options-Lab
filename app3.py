@@ -930,14 +930,6 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
        show_dot={"x":S,"y":G["gamma"],"color":"#a78bfa","label":f"{G['gamma']:.5f}"},
        title="\u0393 Gamma - Convexité (accélération du Delta)", responsive=_rsp)
 
-      # 5 Prix vs Vol
-    svg5 = svg_chart([
-        {"x":list(sigR*100),"y":list(p_sig),"color":"#3b82f6","width":2.2,"fill":True,"fill_color":"#3b82f6","label":"Prix"},
-    ], W=W, H=H, xlabel="Volatilité implicite (%)", ylabel="Prix (\u20ac)",
-       vlines=[vl(sigma*100,"#3b82f6",f"\u03c3={sigma*100:.1f}%")],
-       show_dot={"x":sigma*100,"y":cur,"color":"#3b82f6","label":f"\u20ac{cur:.3f}"},
-       title="\u03bd Vega - Sensibilité à la volatilité implicite", responsive=_rsp)
-  
     # 4 Time Decay
     svg4 = svg_chart([
         {"x":list(TR),"y":list(p_T),"color":"#f59e0b","width":2.2,"fill":True,"fill_color":"#f59e0b","label":"Prix"},
@@ -946,8 +938,15 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
        show_dot={"x":T,"y":cur,"color":"#f59e0b","label":f"\u20ac{cur:.3f}"},
        title="\u0398 Theta - érosion temporelle (Time Decay)", responsive=_rsp)
 
-
-  return svg1,svg2,svg3,svg5,svg4
+    # 5 Prix vs Vol
+    svg5 = svg_chart([
+        {"x":list(sigR*100),"y":list(p_sig),"color":"#3b82f6","width":2.2,"fill":True,"fill_color":"#3b82f6","label":"Prix"},
+    ], W=W, H=H, xlabel="Volatilité implicite (%)", ylabel="Prix (\u20ac)",
+       vlines=[vl(sigma*100,"#3b82f6",f"\u03c3={sigma*100:.1f}%")],
+       show_dot={"x":sigma*100,"y":cur,"color":"#3b82f6","label":f"\u20ac{cur:.3f}"},
+       title="\u03bd Vega - Sensibilité à la volatilité implicite", responsive=_rsp)
+  
+  return svg1 ,svg2 ,svg3 ,sv4 ,svg5
 
 # ─────────────────────────────────────────────────────────────
 #  PAYOFF CHART
