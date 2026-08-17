@@ -1019,7 +1019,8 @@ def build_payoff(name, S, K, Tc, Tp, r, sc, sp, q=0.0, T_pct=0.5, W=1100, H=380)
 
     svg = ([
         {"x":list(SR),"y":list(pnl_pre),"color":"#ffffff","width":3,"fill_pos_neg":True},
-    ], W=W, H=H, xlabel="Prix du sous-jacent (\u20ac)", ylabel="P&L (\u20ac)",
+    ],
+       W=W, H=H, xlabel="Prix du sous-jacent (\u20ac)", ylabel="P&L (\u20ac)",
        hline_zero=True, vlines=vlines,
        title=f"{name} - Profit / Perte",
        PAD_L=60, PAD_R=24, PAD_T=30, PAD_B=46,
