@@ -945,8 +945,8 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
        vlines=[vl(sigma*100,"#3b82f6",f"\u03c3={sigma*100:.1f}%")],
        show_dot={"x":sigma*100,"y":cur,"color":"#3b82f6","label":f"\u20ac{cur:.3f}"},
        title="\u03bd Vega - Sensibilité à la volatilité implicite", responsive=_rsp)
-  
-      return svg1 ,svg2 ,svg3 ,sv4 ,svg5 
+    
+    return svg1 ,svg2 ,svg3 ,sv4 ,svg5 
 
 # ─────────────────────────────────────────────────────────────
 #  PAYOFF CHART
