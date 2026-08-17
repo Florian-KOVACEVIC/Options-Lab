@@ -687,9 +687,9 @@ def barrier_monitor_selector(key_prefix, T):
     Retourne (monitor, n_obs) prêts à passer à priced_barrier() / priced_barrier_greeks()."""
     monitor = st.radio("Type de barrière", ["continu", "discret", "echeance"],
                        horizontal=True, key=f"{key_prefix}_monitor",
-                       format_func=lambda x: {"continu": "Continue (américaine)",
-                                              "discret": "Discrète (bermudienne)",
-                                              "echeance": "À l'échéance (européenne)"}[x],
+                       format_func=lambda x: {"continu": "Américaine)",
+                                              "discret": "Bermudienne)",
+                                              "echeance": "Européenne)"}[x],
                        help="Détermine à quels instants le franchissement de la barrière est vérifié. "
                             "Détails dans le glossaire.")
     n_obs = None
@@ -906,10 +906,10 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
     # 1 Prix
     svg1 = svg_chart([
         {"x":list(SR),"y":list(intr),"color":"#52525b","width":1,"dash":True,"label":"Valeur intrinsèque"},
-        {"x":list(SR),"y":list(prices),"color":"#f59e0b","width":2.2,"fill":True,"label":f"Prix {otype.upper()}"},
+        {"x":list(SR),"y":list(prices),"color":"#7affdc","width":2.2,"fill":True,"label":f"Prix {otype.upper()}"},
     ], W=W, H=H, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac)",
-       vlines=[vl(S,"#3b82f6",f"S={S:.0f}"), vl(K,"#52525b",f"K={K:.0f}")],
-       show_dot={"x":S,"y":cur,"color":"#f59e0b","label":f"\u20ac{cur:.3f}"},
+       vlines=[vl(S,"#3b82f6",f"S={S:.0f}"), vl(K,"#7affdc",f"K={K:.0f}")],
+       show_dot={"x":S,"y":cur,"color":"#7affdc","label":f"\u20ac{cur:.3f}"},
        title="Prix de l'option selon le spot", responsive=_rsp)
 
     # 2 Delta
@@ -930,23 +930,23 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
        show_dot={"x":S,"y":G["gamma"],"color":"#a78bfa","label":f"{G['gamma']:.5f}"},
        title="\u0393 Gamma - Convexité (accélération du Delta)", responsive=_rsp)
 
-    # 4 Prix vs Vol
+    # 4 Time Decay
     svg4 = svg_chart([
-        {"x":list(sigR*100),"y":list(p_sig),"color":"#3b82f6","width":2.2,"fill":True,"fill_color":"#3b82f6","label":"Prix"},
-    ], W=W, H=H, xlabel="Volatilité implicite (%)", ylabel="Prix (\u20ac)",
-       vlines=[vl(sigma*100,"#f59e0b",f"\u03c3={sigma*100:.1f}%")],
-       show_dot={"x":sigma*100,"y":cur,"color":"#f59e0b","label":f"\u20ac{cur:.3f}"},
-       title="\u03bd Vega - Sensibilité à la volatilité implicite", responsive=_rsp)
-
-    # 5 Time Decay
-    svg5 = svg_chart([
         {"x":list(TR),"y":list(p_T),"color":"#f59e0b","width":2.2,"fill":True,"fill_color":"#f59e0b","label":"Prix"},
     ], W=W, H=H, xlabel="Maturité (en année)", ylabel="Prix (\u20ac)",
        vlines=[vl(T,"#f59e0b",fmt_mat(T))],
        show_dot={"x":T,"y":cur,"color":"#f59e0b","label":f"\u20ac{cur:.3f}"},
-       title="\u0398 Theta - \u00c9rosion temporelle (Time Decay)", responsive=_rsp)
+       title="\u0398 Theta - érosion temporelle (Time Decay)", responsive=_rsp)
+  
+    # 5 Prix vs Vol
+    svg5 = svg_chart([
+        {"x":list(sigR*100),"y":list(p_sig),"color":"#3b82f6","width":2.2,"fill":True,"fill_color":"#3b82f6","label":"Prix"},
+    ], W=W, H=H, xlabel="Volatilité implicite (%)", ylabel="Prix (\u20ac)",
+       vlines=[vl(sigma*100,"#3b82f6",f"\u03c3={sigma*100:.1f}%")],
+       show_dot={"x":sigma*100,"y":cur,"color":"#3b82f6","label":f"\u20ac{cur:.3f}"},
+       title="\u03bd Vega - Sensibilité à la volatilité implicite", responsive=_rsp)
 
-    return svg1,svg2,svg3,svg4,svg5
+  return svg1,svg2,svg3,svg4,svg5
 
 # ─────────────────────────────────────────────────────────────
 #  PAYOFF CHART
@@ -2535,7 +2535,7 @@ with tab4:
         with twc1:
             tw_low_active = st.checkbox("Barrière basse (plafonne le gain sur la baisse)", value=True, key="tw_low_active")
         with twc2:
-            tw_high_active = st.checkbox("Barrière haute (plafonne le gain sur la hausse)", value=False, key="tw_high_active")
+            tw_high_active = st.checkbox("Barrière haute (plafonne le gain sur la hausse)", value=True, key="tw_high_active")
         if not tw_low_active and not tw_high_active:
             st.caption("Aucune barrière active - Twin Win \"pur\", sans plafond ni désactivation (rare en pratique, "
                       "utile pour comprendre la structure de base).")
