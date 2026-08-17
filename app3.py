@@ -1474,39 +1474,6 @@ $$d_1 = \frac{\ln(S/K) + (r - q + \sigma^2/2)\,T}{\sigma\sqrt{T}} \qquad d_2 = d
     section_header("Visualisations")
     svg1 ,svg2 ,svg3 ,svg4 ,svg5 = build_dashboard(S,K,T,r,sigma,q_div,otype,pos_sign)
 
-    # Ligne 1
-    chart_r1c1, chart_r1c2 = st.columns(2)
-    with chart_r1c1: show_svg(svg1, full_width=True, title="Prix de l'option selon le spot", chart_id="prix")
-    with chart_r1c2: show_svg(svg2, full_width=True, title="Δ Delta - Sensibilité au prix du sous-jacent", chart_id="delta")
-
-    with st.expander(" Comment lire ces graphiques"):
-        st.markdown('<div class="chart-exp"><b>Prix de l\'option (gauche)</b> - La courbe orange montre comment le prix de option '
-                    'évolue selon le spot. La ligne grise pointillé est la valeur intrinsèque (plancher). '
-                    'L\'écart entre les deux est la valeur temps.<br>'
-                    '<b>Delta (droite)</b> - Montre la pente de la courbe de prix. Un delta de 0.5 signifie que '
-                    'votre option gagne ~0.50\u20ac pour chaque +1\u20ac du sous-jacent.</div>', unsafe_allow_html=True)
-
-    # Ligne 2
-    chart_r2c1, chart_r2c2 = st.columns(2)
-    with chart_r2c1: show_svg(svg3, full_width=True, title="Γ Gamma - Convexité (accélération du Delta)", chart_id="gamma")
-    with chart_r2c2: show_svg(svg4, full_width=True, title="ν Vega - Sensibilité à la volatilité implicite", chart_id="vega")
-
-    with st.expander("Comment lire ces graphiques"):
-        st.markdown('<div class="chart-exp"><b>Gamma (gauche)</b> - Pic maximal au strike (ATM). '
-                    'Plus le gamma est élevé, plus votre delta accélère vite - utile pour les acheteurs, '
-                    'risqué pour les vendeurs.<br>'
-                    '<b>Vega (droite)</b> - Montre comment le prix réagit à la volatilité. '
-                    'La ligne verticale orange marque votre volatilité actuelle.</div>', unsafe_allow_html=True)
-
-    # Ligne 3 : centre
-    chart_r3_pad1, chart_r3c1, chart_r3_pad2 = st.columns([1,2,1])
-    with chart_r3c1: show_svg(svg5, full_width=True, title="Θ Theta - Érosion temporelle (Time Decay)", chart_id="theta")
-
-    with st.expander("Comment lire ce graphique"):
-        st.markdown('<div class="chart-exp"><b>Theta - Time Decay</b> - La courbe montre l\'érosion du prix '
-                    'à mesure que le temps passe. La décroissance s\'accélère en approchant de l\'expiration '
-                    '(courbe concave). La ligne verticale orange marque votre maturité actuelle.</div>', unsafe_allow_html=True)
-
     # ── Analyse de scénarios ──
     section_header("Analyse de scénarios - Stress Test")
     st.markdown('<div style="font-size:.78rem;color:var(--t2);line-height:1.7;padding:6px 0 10px">'
