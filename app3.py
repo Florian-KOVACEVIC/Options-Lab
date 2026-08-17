@@ -248,7 +248,7 @@ def priced_barrier_greeks(S, K, H, T, r, sigma, q, otype, barrier_dir, knock, re
     return dict(delta=delta, gamma=gamma, theta=theta, vega=vega, rho=rho)
 
 # ─────────────────────────────────────────────────────────────
-#  AUTOCALL / PHOENIX ENGINE — Monte-Carlo (observations discrètes)
+#  AUTOCALL / PHOENIX ENGINE - Monte-Carlo (observations discrètes)
 #  Produit path-dependent : rappel et coupon observés à des dates fixes -> pas de formule
 #  fermée, la simulation Monte-Carlo est l'approche standard des desks de produits structurés.
 #  Nombres aléatoires communs (même graine -> mêmes tirages Z) entre appels voisins pour
@@ -2308,9 +2308,7 @@ with tab4:
     st.markdown('<div style="margin-bottom:6px"><span style="font-size:1.1rem;font-weight:800;letter-spacing:-.3px;'
                 'background:linear-gradient(135deg,#60a5fa 0%,#a78bfa 35%,#c084fc 60%,#f0abfc 85%,#fafafa 100%);'
                 '-webkit-background-clip:text;-webkit-text-fill-color:transparent">Barrières \u00b7 Produits structurés</span>'
-                '<span style="font-size:.74rem;color:var(--t3);margin-left:12px">'
-                'Options à barrière, Twin Win, Airbag / Cushion, Autocall / Phoenix, Reverse Convertible, '
-                'Bonus Certificate, Outperformance, Options Digitales</span></div>',
+                '<span style="font-size:.74rem;color:var(--t3);margin-left:12px"></span></div>',
                 unsafe_allow_html=True)
 
     section_header("Famille de produit")
@@ -2535,9 +2533,9 @@ with tab4:
         section_header("Barrières actives")
         twc1, twc2 = st.columns(2)
         with twc1:
-            tw_low_active = st.checkbox("Barrière basse (plafonne le 'gain sur la baisse')", value=True, key="tw_low_active")
+            tw_low_active = st.checkbox("Barrière basse (plafonne le gain sur la baisse)", value=True, key="tw_low_active")
         with twc2:
-            tw_high_active = st.checkbox("Barrière haute (plafonne le 'gain sur la hausse')", value=False, key="tw_high_active")
+            tw_high_active = st.checkbox("Barrière haute (plafonne le gain sur la hausse)", value=False, key="tw_high_active")
         if not tw_low_active and not tw_high_active:
             st.caption("Aucune barrière active - Twin Win \"pur\", sans plafond ni désactivation (rare en pratique, "
                       "utile pour comprendre la structure de base).")
@@ -2551,7 +2549,7 @@ with tab4:
             H_low = st.number_input("Barrière basse", value=round(Stw*0.8, 1), step=1.0, key="tw_hlow",
                                     disabled=not tw_low_active, help="Doit être strictement inférieure au spot")
         with twp3:
-            H_high = st.number_input("Barrière haute", value=round(Stw*1.3, 1), step=1.0, key="tw_hhigh",
+            H_high = st.number_input("Barrière haute", value=round(Stw*1.2, 1), step=1.0, key="tw_hhigh",
                                      disabled=not tw_high_active, help="Doit être strictement supérieure au spot")
         with twp4:
             Ptw = st.slider("Participation (%)", 0, 200, 100, 5, key="tw_part",
@@ -3563,13 +3561,13 @@ with tab4:
         with cdg3: show_svg(svg_dg3, full_width=True, title="Gamma selon le spot", chart_id="dg_gamma")
 
 st.markdown("""
-<div style="text-align:center;padding:32px 0 8px;font-size:.64rem;color:#3f3f46;letter-spacing:1px">OPTIONS LAB \u00b7 BLACK-SCHOLES</div>
+<div style="text-align:center;padding:32px 0 8px;font-size:.64rem;color:#3f3f46;letter-spacing:1px">OPTIONS LAB</div>
 <div style="text-align:center;padding:0 40px 24px;font-size:.64rem;color:#3f3f46;line-height:1.7;max-width:800px;margin:0 auto">
   Les résultats fournis par cette application reposent sur le modèle théorique de Black-Scholes
   et sont présentés à titre purement informatif et pédagogique. Ils ne constituent en aucun cas
   un conseil en investissement, une recommandation d\'achat ou de vente, ni une garantie de résultat.
   Les marchés d\'options comportent des risques significatifs, y compris la perte totale du capital investi.
-  Les calculs peuvent contenir des approximations inhérentes au modèle (volatilité constante, marchés sans friction, etc.).
+  Les calculs peuvent contenir des approximations inhérentes au modèle (volatilité constante, marchés sans friction...).
   Consultez un professionnel agréé avant toute décision d\'investissement.
 </div>
 """, unsafe_allow_html=True)
