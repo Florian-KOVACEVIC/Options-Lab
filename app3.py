@@ -877,7 +877,7 @@ def prob_bar_html(p_profit, label="Probabilité de profit"):
             f'<span style="color:var(--t3)">{100-pct:.1f}% de perte</span></div></div>')
 
 # ─────────────────────────────────────────────────────────────
-#  DASHBOARD — 5 SVG charts
+#  DASHBOARD - 5 SVG charts
 # ─────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
@@ -1017,7 +1017,7 @@ def build_payoff(name, S, K, Tc, Tp, r, sc, sp, q=0.0, T_pct=0.5, W=1100, H=380)
         if vl.get("label","").startswith("BE"):
             legend_items.append({"label":vl["label"],"color":vl["color"],"dash":True})
 
-    svg = svg_chart([
+    svg = ([
         {"x":list(SR),"y":list(pnl_pre),"color":"#ffffff","width":3,"fill_pos_neg":True},
     ], W=W, H=H, xlabel="Prix du sous-jacent (\u20ac)", ylabel="P&L (\u20ac)",
        hline_zero=True, vlines=vlines,
