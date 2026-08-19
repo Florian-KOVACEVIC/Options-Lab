@@ -417,6 +417,64 @@ def autocall_worst_of_price(n_assets, T, n_obs, r, q_tuple, sigma_tuple, corr,
     return price, stderr, proba_call, proba_loss, vie_moyenne, proba_worst_asset
 
 
+# ─────────────────────────────────────────────────────────────
+#  REVERSE CONVERTIBLE / BRC WORST-OF — même moteur corrélé que l'Autocall Worst-of
+#  ci-dessus (_worst_of_paths), mais sans dates de rappel ni coupon conditionnel : la
+#  Reverse Convertible verse un coupon FIXE quoi qu'il arrive, seule la restitution du
+#  capital dépend du pire performeur du panier à l'échéance (RC) ou d'un franchissement
+#  préalable de la barrière par ce pire performeur (BRC - put down-and-in sur le Worst-of).
+#
+#  Sens de la corrélation - NE S'INVERSE PAS par rapport au Phoenix Worst-of : dans les deux
+#  cas, le produit dépend du pire performeur du panier franchissant un seuil "du bon côté"
+#  (au-dessus, pour le rappel/coupon du Phoenix comme pour rester au-dessus de K/H sur la RC).
+#  Une corrélation BASSE augmente la dispersion entre actifs, donc la probabilité qu'AU MOINS
+#  UN actif décroche loin des autres et tire le pire performeur vers le bas - ce qui est
+#  défavorable au porteur dans les deux structures. Autrement dit : le prix d'une RC/BRC
+#  Worst-of AUGMENTE avec la corrélation (comme le Phoenix), et la probabilité de perte en
+#  capital DIMINUE quand la corrélation augmente. C'est le prix de l'option vendue qui bouge
+#  en sens inverse : la valeur du "put Worst-of" implicitement vendu par l'investisseur
+#  AUGMENTE quand la corrélation baisse (effet de dispersion classique des options rainbow
+#  sur minimum), ce qui réduit d'autant le prix de la note - mais la note elle-même suit bien
+#  la même direction que le Phoenix vis-à-vis de la corrélation.
+# ─────────────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def reverse_convertible_worst_of_price(n_assets, T, n_obs, r, q_tuple, sigma_tuple, corr,
+                                        strike_pct, barrier_pct, coupon_rate, barrier_on=True,
+                                        n_paths=12000, seed=42):
+    """Prix Monte-Carlo (pour 100\u20ac de nominal) d'une Reverse Convertible / Barrier Reverse
+    Convertible Worst-of.
+    - strike_pct / barrier_pct : K et H exprimés en fraction du niveau initial normalisé (1.0 =
+      100%, même convention que autocall_pct/coupon_pct/protect_pct dans le moteur Autocall Worst-of)
+    - coupon_rate  : coupon annualisé (fraction), versé intégralement quoi qu'il arrive
+    - barrier_on   : False -> Reverse Convertible simple (perte dès que le pire finit sous K) ;
+                     True  -> BRC (perte seulement si le pire performeur a touché H en cours de vie)
+    Retourne (prix, erreur_std_MC, proba_perte_capital, proba_barrière_touchée, proba_worst_asset[n_assets]).
+    """
+    perf, worst = _worst_of_paths(n_assets, T, n_obs, r, q_tuple, sigma_tuple, corr, n_paths, seed)
+    W_final = worst[:, -1]
+    disc_T = np.exp(-r*T)
+    coupon_total = coupon_rate * 100.0 * T
+
+    if barrier_on:
+        touched = worst.min(axis=1) <= barrier_pct
+        loss_trigger = touched & (W_final < strike_pct)
+        proba_touch = float(np.mean(touched))
+    else:
+        loss_trigger = W_final < strike_pct
+        proba_touch = float('nan')
+
+    capital = np.where(loss_trigger, 100.0 * W_final / strike_pct, 100.0)
+    pv = (capital + coupon_total) * disc_T
+
+    price = float(np.mean(pv))
+    stderr = float(np.std(pv) / np.sqrt(n_paths))
+    proba_loss = float(np.mean(loss_trigger))
+    final_perf = perf[:, -1, :]
+    worst_idx = np.argmin(final_perf, axis=1)
+    proba_worst_asset = np.array([float(np.mean(worst_idx == j)) for j in range(n_assets)])
+    return price, stderr, proba_loss, proba_touch, proba_worst_asset
+
+
 def mat_from_ymd(y,m,d): return max(y+m/12+d/365, 1/365)
 
 def fmt_mat(T):
@@ -699,6 +757,29 @@ def barrier_monitor_selector(key_prefix, T):
         n_per_year = {"Quotidienne": 252, "Hebdomadaire": 52, "Mensuelle": 12}[freq]
         n_obs = max(int(round(T * n_per_year)), 1)
     return monitor, n_obs
+
+def barrier_monitor_selector_wo(key_prefix, T):
+    """Équivalent de barrier_monitor_selector pour les produits Worst-of : pas de formule fermée
+    disponible pour une barrière sur un panier corrélé (contrairement au cas mono-actif), donc les
+    3 types de monitoring sont ici approchés par simulation Monte-Carlo à pas de temps discret.
+    Le monitoring 'continu' est approché par un pas quotidien, plafonné à 300 dates pour rester
+    réactif (compromis performance/précision, comme les autres approximations MC de l'app)."""
+    monitor = st.radio("Type de barrière", ["continu", "discret", "echeance"],
+                       horizontal=True, key=f"{key_prefix}_monitor",
+                       format_func=lambda x: {"continu": "Continue (approx. quotidienne)",
+                                              "discret": "Discrète (dates choisies)",
+                                              "echeance": "Européenne (à l'échéance)"}[x],
+                       help="Sans formule fermée pour un panier corrélé, le monitoring continu est ici "
+                            "approché par simulation à pas quotidien plafonné, plutôt que par la "
+                            "correction de continuité fermée utilisée pour le cas mono-actif.")
+    if monitor == "echeance":
+        return monitor, 1
+    if monitor == "continu":
+        return monitor, min(max(int(round(T * 252)), 1), 300)
+    freq = st.select_slider("Fréquence d'observation", options=["Hebdomadaire", "Mensuelle", "Trimestrielle"],
+                            value="Mensuelle", key=f"{key_prefix}_freq")
+    n_per_year = {"Hebdomadaire": 52, "Mensuelle": 12, "Trimestrielle": 4}[freq]
+    return monitor, max(int(round(T * n_per_year)), 1)
 
 def mat_widget(pfx, dy=1, dm=0, dd=0):
     c1,c2,c3 = st.columns(3)
@@ -2250,7 +2331,10 @@ with tab5:
         "sous-jacent termine sous le strike K, le capital remboursé est réduit au prorata de la baisse "
         "(participation 1:1). C'est le produit structuré retail le plus répandu en Europe. Une <b>Barrier "
         "Reverse Convertible (BRC)</b> conditionne cette perte à un franchissement préalable d'une barrière "
-        "H &lt; K (put down-and-in) : le capital reste protégé si H n'est jamais touchée.",
+        "H &lt; K (put down-and-in) : le capital reste protégé si H n'est jamais touchée. Existe aussi en "
+        "version <b>Worst-of</b> (K et H appliqués au pire performeur d'un panier de 2-3 actifs) : le prix "
+        "évolue alors avec la corrélation exactement comme un Autocall Worst-of - une corrélation basse "
+        "augmente le risque, donc réduit le prix.",
         "#f472b6", "244,114,182")
     cards4 += gls_card("BC", "Bonus Certificate", "Tracker avec plancher conditionnel",
         "Réplique un tracker (participation 1:1 au sous-jacent) et garantit en plus un remboursement minimum "
@@ -2278,11 +2362,14 @@ with tab5:
         "certificat ne perçoit pas les dividendes versés par l'action sous-jacente.",
         "#3b82f6", "59,130,246")
     cards4 += gls_card("WO", "Worst-of", "Barrière sur le pire actif du panier",
-        "Variante multi-actifs (généralement 2 ou 3) d'un produit à barrière ou d'un autocall, où les "
-        "barrières s'appliquent au sous-jacent <b>le moins performant</b> du panier à chaque date, et non à un "
-        "seul actif. Structure très répandue en pratique (souvent moins chère à produire pour l'émetteur, donc "
-        "plus rémunératrice pour l'investisseur), mais plus risquée : une <b>corrélation basse</b> entre les "
-        "actifs augmente la dispersion, donc la probabilité qu'au moins l'un d'eux décroche loin des autres.",
+        "Variante multi-actifs (généralement 2 ou 3) d'un produit à barrière, d'un autocall ou d'une reverse "
+        "convertible, où les barrières/strikes s'appliquent au sous-jacent <b>le moins performant</b> du "
+        "panier à chaque date, et non à un seul actif. Structure très répandue en pratique (souvent moins "
+        "chère à produire pour l'émetteur, donc plus rémunératrice pour l'investisseur), mais plus risquée : "
+        "une <b>corrélation basse</b> entre les actifs augmente la dispersion, donc la probabilité qu'au moins "
+        "l'un d'eux décroche loin des autres - ceci vaut dans le <b>même sens</b> pour l'Autocall/Phoenix et "
+        "pour la Reverse Convertible/BRC, malgré leurs payoffs opposés (rappel/coupon vs perte en capital) : "
+        "dans les deux cas, une corrélation plus élevée est favorable au porteur de la note.",
         "#ef4444", "239,68,68")
     st.markdown(f'<div class="gls-grid">{cards4}</div>', unsafe_allow_html=True)
 
@@ -3082,25 +3169,70 @@ with tab4:
                     'sinon le capital est intégralement protégé même si le sous-jacent finit sous K à l\'échéance. '
                     'C\'est le produit structuré retail le plus répandu en Europe.</div>', unsafe_allow_html=True)
 
+        worst_of_rc = st.checkbox("Worst-of (plusieurs sous-jacents)", value=False, key="rc_worst_of",
+                                  help="Le strike K et la barrière H s'appliquent alors au sous-jacent le MOINS "
+                                       "performant du panier à l'échéance (et en cours de vie pour la barrière "
+                                       "d'une BRC) - même logique que le Worst-of Autocall/Phoenix. Une "
+                                       "corrélation plus BASSE entre les actifs augmente la dispersion, donc le "
+                                       "risque (et réduit le prix de la note) : ce n'est PAS l'inverse du "
+                                       "Phoenix, la corrélation joue dans le même sens sur les deux structures.")
+        n_assets_rc = 1
+        sigma_list_rc, q_list_rc, corr_rc = [0.25], [0.0], 0.5
+        if worst_of_rc:
+            st.markdown('<div style="font-size:.72rem;color:var(--t3);margin:-4px 0 10px;line-height:1.5">'
+                       'Par simplicité, les 2 ou 3 actifs sont supposés partir du <b>même niveau normalisé</b> '
+                       '(100% chacun) - seules leur volatilité, leur dividende et leur corrélation diffèrent. '
+                       'Le strike K et la barrière H saisis ci-dessous s\'interprètent alors comme des niveaux '
+                       'en <b>% de ce panier normalisé</b> (via leur ratio à S\u2080), appliqués au pire '
+                       'performeur - et non plus à un seul actif.</div>', unsafe_allow_html=True)
+            n_assets_rc = st.radio("Nombre de sous-jacents", [2, 3], horizontal=True, key="rc_nassets")
+            asset_cols_rc = st.columns(n_assets_rc)
+            sigma_list_rc, q_list_rc = [], []
+            for j, col in enumerate(asset_cols_rc):
+                with col:
+                    st.markdown(f'<div class="fl">Actif {j+1}</div>', unsafe_allow_html=True)
+                    sj = st.slider(f"\u03c3 actif {j+1} (%)", 5, 100, 20+j*7, 1, key=f"rc_sig{j}") / 100
+                    qj = st.slider(f"q actif {j+1} (%)", 0.0, 15.0, 0.0, 0.5, key=f"rc_q{j}") / 100
+                    sigma_list_rc.append(sj); q_list_rc.append(qj)
+            corr_rc = st.slider("Corrélation moyenne entre actifs", 0.0, 0.95, 0.5, 0.05, key="rc_corr",
+                                help="Corrélation appliquée uniformément entre chaque paire d'actifs. Plus "
+                                     "elle est basse, plus les actifs se dispersent - et plus la RC/BRC "
+                                     "Worst-of est risquée (prix plus bas, donc coupon exigé plus élevé pour "
+                                     "revenir au pair).")
+
         section_header("Paramètres")
         rc1, rc2, rc3, rc4 = st.columns(4)
         with rc1:
-            Src = st.number_input("Spot S\u2080", value=100.0, step=1.0, key="rc_s")
+            Src = st.number_input("Spot S\u2080", value=100.0, step=1.0, key="rc_s",
+                                  help="Niveau de référence commun du panier (100% = niveau normalisé) sur un Worst-of"
+                                       if worst_of_rc else None)
         with rc2:
             Krc = st.number_input("Strike K", value=100.0, step=1.0, key="rc_k",
-                                  help="Niveau de référence pour le remboursement du capital à l'échéance")
+                                  help="Niveau de référence pour le remboursement du capital à l'échéance"
+                                       + (" - appliqué au pire performeur du panier (Worst-of)" if worst_of_rc else ""))
         with rc3:
             r_rc = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="rc_r") / 100
         with rc4:
-            q_rc = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="rc_q") / 100
+            if not worst_of_rc:
+                q_rc = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="rc_q") / 100
+            else:
+                q_rc = None
+                st.markdown('<div class="fl">Dividende q</div><div style="font-size:.72rem;color:var(--t3);'
+                           'padding-top:6px">Défini par actif ci-dessus</div>', unsafe_allow_html=True)
 
         rc5, rc6, rc7 = st.columns(3)
         with rc5:
             field_label("Maturité (A / M / J)")
             Trc = mat_inline("rc_t", 0, 1, 15)
         with rc6:
-            field_label("Volatilité \u03c3 (%)")
-            sigrc = st.slider("sigrc", 1.0, 150.0, 25.0, 0.5, key="rc_sigma", label_visibility="collapsed") / 100
+            if not worst_of_rc:
+                field_label("Volatilité \u03c3 (%)")
+                sigrc = st.slider("sigrc", 1.0, 150.0, 25.0, 0.5, key="rc_sigma", label_visibility="collapsed") / 100
+            else:
+                sigrc = None
+                field_label("Volatilité \u03c3")
+                st.markdown('<div style="font-size:.72rem;color:var(--t3);padding-top:6px">Définie par actif ci-dessus</div>',
+                           unsafe_allow_html=True)
         with rc7:
             coupon_rc = st.slider("Coupon annualisé (%)", 0.0, 30.0, 8.0, 0.25, key="rc_coupon",
                                   help="Coupon fixe versé quoi qu'il arrive, en % annuel du nominal") / 100
@@ -3113,94 +3245,196 @@ with tab4:
         monitor_rc, n_obs_rc = "continu", None
         if barrier_on_rc:
             Hrc = st.slider("Barrière de protection H (% du strike K)", 50, 99, 70, 1, key="rc_h") / 100 * Krc
-            monitor_rc, n_obs_rc = barrier_monitor_selector("rc", Trc)
+            if not worst_of_rc:
+                monitor_rc, n_obs_rc = barrier_monitor_selector("rc", Trc)
+            else:
+                monitor_rc, n_obs_rc = barrier_monitor_selector_wo("rc_wo", Trc)
+
+        n_paths_rc = 12000
+        if worst_of_rc:
+            n_paths_rc = st.select_slider("Nb simulations Monte-Carlo", options=[3000, 6000, 12000, 24000, 40000],
+                                          value=12000, key="rc_npaths",
+                                          help="Plus de simulations = résultat plus précis mais plus lent")
 
         if barrier_on_rc and Hrc >= Krc:
             st.warning("La barrière de protection H doit être strictement inférieure au strike K.")
+        elif worst_of_rc and Src <= 0:
+            st.warning("Le spot S\u2080 doit être strictement positif (sert de dénominateur de normalisation).")
         else:
-            def _rc_price(S, T, sigma, r):
-                pr = (priced_barrier(S, Krc, Hrc, T, r, sigma, q_rc, "put", "down", "in", 0.0, monitor_rc, n_obs_rc) if barrier_on_rc
-                      else bs_price(S, Krc, T, r, sigma, q_rc, "put"))
-                return (100 + coupon_rc*100*T) * np.exp(-r*T) - (100/Krc)*pr
+            if not worst_of_rc:
+                def _rc_price(S, T, sigma, r):
+                    pr = (priced_barrier(S, Krc, Hrc, T, r, sigma, q_rc, "put", "down", "in", 0.0, monitor_rc, n_obs_rc) if barrier_on_rc
+                          else bs_price(S, Krc, T, r, sigma, q_rc, "put"))
+                    return (100 + coupon_rc*100*T) * np.exp(-r*T) - (100/Krc)*pr
 
-            coupon_total = coupon_rc * 100 * Trc
-            put_rc = (priced_barrier(Src, Krc, Hrc, Trc, r_rc, sigrc, q_rc, "put", "down", "in", 0.0, monitor_rc, n_obs_rc) if barrier_on_rc
-                      else bs_price(Src, Krc, Trc, r_rc, sigrc, q_rc, "put"))
-            price_rc = _rc_price(Src, Trc, sigrc, r_rc)
+                coupon_total = coupon_rc * 100 * Trc
+                put_rc = (priced_barrier(Src, Krc, Hrc, Trc, r_rc, sigrc, q_rc, "put", "down", "in", 0.0, monitor_rc, n_obs_rc) if barrier_on_rc
+                          else bs_price(Src, Krc, Trc, r_rc, sigrc, q_rc, "put"))
+                price_rc = _rc_price(Src, Trc, sigrc, r_rc)
 
-            hS = max(Src*0.0025, 1e-3); hV = 0.0025
-            p0 = price_rc
-            delta_rc = (_rc_price(Src+hS,Trc,sigrc,r_rc) - _rc_price(Src-hS,Trc,sigrc,r_rc)) / (2*hS)
-            gamma_rc = (_rc_price(Src+hS,Trc,sigrc,r_rc) - 2*p0 + _rc_price(Src-hS,Trc,sigrc,r_rc)) / (hS**2)
-            vega_rc  = (_rc_price(Src,Trc,sigrc+hV,r_rc) - _rc_price(Src,Trc,sigrc-hV,r_rc)) / (2*hV) / 100
+                hS = max(Src*0.0025, 1e-3); hV = 0.0025
+                p0 = price_rc
+                delta_rc = (_rc_price(Src+hS,Trc,sigrc,r_rc) - _rc_price(Src-hS,Trc,sigrc,r_rc)) / (2*hS)
+                gamma_rc = (_rc_price(Src+hS,Trc,sigrc,r_rc) - 2*p0 + _rc_price(Src-hS,Trc,sigrc,r_rc)) / (hS**2)
+                vega_rc  = (_rc_price(Src,Trc,sigrc+hV,r_rc) - _rc_price(Src,Trc,sigrc-hV,r_rc)) / (2*hV) / 100
 
-            st.markdown("---")
-            badge_rc = "BRC" if barrier_on_rc else "RC"
-            diff_par = price_rc - 100
-            hero_col, greeks_col = st.columns([5, 7], gap="large")
-            with hero_col:
-                st.markdown(f"""
-                <div class="ph">
-                  <div>
-                    <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
-                    <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
-                    <div class="ph-sub">
-                      <span>vs Pair (100) = {diff_par:+.2f}\u20ac</span><span>Coupon total = \u20ac{coupon_total:.2f}</span>
-                      <span>Put vendu = \u20ac{put_rc:.3f}</span>
-                    </div>
-                  </div>
-                  <span class="ph-badge ph-p">{badge_rc}</span>
-                </div>""", unsafe_allow_html=True)
-            with greeks_col:
-                section_header("Grecques (différences finies)")
-                gdata_rc = [("\u0394","Delta",delta_rc,".4f","#22c55e","Sensibilité au spot"),
-                            ("\u0393","Gamma",gamma_rc,".5f","#a78bfa","Convexité"),
-                            ("\u03bd","Vega",vega_rc,".4f","#3b82f6","Sensibilité à la vol")]
-                cards_html_rc = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_rc)
-                st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(3,1fr)">{cards_html_rc}</div>',
-                           unsafe_allow_html=True)
-                st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
-                           'Le Delta est négatif : la note perd de la valeur si le sous-jacent baisse - c\'est le '
-                           'reflet du put vendu implicitement pour financer le coupon. Sans barrière, cette '
-                           'exposition est lisse (put vanille) ; avec barrière (BRC), elle devient très marquée '
-                           'près de H, comme pour un Shark Note.</div>', unsafe_allow_html=True)
+                st.markdown("---")
+                badge_rc = "BRC" if barrier_on_rc else "RC"
+                diff_par = price_rc - 100
+                hero_col, greeks_col = st.columns([5, 7], gap="large")
+                with hero_col:
+                    st.markdown(f"""
+                    <div class="ph">
+                      <div>
+                        <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
+                        <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                        <div class="ph-sub">
+                          <span>vs Pair (100) = {diff_par:+.2f}\u20ac</span><span>Coupon total = \u20ac{coupon_total:.2f}</span>
+                          <span>Put vendu = \u20ac{put_rc:.3f}</span>
+                        </div>
+                      </div>
+                      <span class="ph-badge ph-p">{badge_rc}</span>
+                    </div>""", unsafe_allow_html=True)
+                with greeks_col:
+                    section_header("Grecques (différences finies)")
+                    gdata_rc = [("\u0394","Delta",delta_rc,".4f","#22c55e","Sensibilité au spot"),
+                                ("\u0393","Gamma",gamma_rc,".5f","#a78bfa","Convexité"),
+                                ("\u03bd","Vega",vega_rc,".4f","#3b82f6","Sensibilité à la vol")]
+                    cards_html_rc = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_rc)
+                    st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(3,1fr)">{cards_html_rc}</div>',
+                               unsafe_allow_html=True)
+                    st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                               'Le Delta est négatif : la note perd de la valeur si le sous-jacent baisse - c\'est le '
+                               'reflet du put vendu implicitement pour financer le coupon. Sans barrière, cette '
+                               'exposition est lisse (put vanille) ; avec barrière (BRC), elle devient très marquée '
+                               'près de H, comme pour un Shark Note.</div>', unsafe_allow_html=True)
 
-            section_header("Visualisations")
-            Nrc = 220
-            lo = min(Src, Hrc if barrier_on_rc else Krc) * 0.5
-            hi = max(Src, Krc) * 1.4
-            SRrc = np.linspace(max(lo, 1), hi, Nrc)
-            price_curve_rc = np.array([_rc_price(s, Trc, sigrc, r_rc) for s in SRrc])
-            payoff_maturity_rc = (100+coupon_total) - (100/Krc)*np.maximum(Krc-SRrc, 0)
-            delta_curve_rc = np.array([(_rc_price(s+hS,Trc,sigrc,r_rc)-_rc_price(s-hS,Trc,sigrc,r_rc))/(2*hS) for s in SRrc])
-            gamma_curve_rc = np.array([(_rc_price(s+hS,Trc,sigrc,r_rc)-2*_rc_price(s,Trc,sigrc,r_rc)+_rc_price(s-hS,Trc,sigrc,r_rc))/(hS**2) for s in SRrc])
+                section_header("Visualisations")
+                Nrc = 220
+                lo = min(Src, Hrc if barrier_on_rc else Krc) * 0.5
+                hi = max(Src, Krc) * 1.4
+                SRrc = np.linspace(max(lo, 1), hi, Nrc)
+                price_curve_rc = np.array([_rc_price(s, Trc, sigrc, r_rc) for s in SRrc])
+                payoff_maturity_rc = (100+coupon_total) - (100/Krc)*np.maximum(Krc-SRrc, 0)
+                delta_curve_rc = np.array([(_rc_price(s+hS,Trc,sigrc,r_rc)-_rc_price(s-hS,Trc,sigrc,r_rc))/(2*hS) for s in SRrc])
+                gamma_curve_rc = np.array([(_rc_price(s+hS,Trc,sigrc,r_rc)-2*_rc_price(s,Trc,sigrc,r_rc)+_rc_price(s-hS,Trc,sigrc,r_rc))/(hS**2) for s in SRrc])
 
-            vlines_rc = [{"x":Src,"color":"#3b82f6","label":f"S={Src:.0f}","dash":True},
-                        {"x":Krc,"color":"#52525b","label":f"K={Krc:.0f}","dash":True}]
-            if barrier_on_rc: vlines_rc.append({"x":Hrc,"color":"#ef4444","label":f"H={Hrc:.0f}","dash":True})
+                vlines_rc = [{"x":Src,"color":"#3b82f6","label":f"S={Src:.0f}","dash":True},
+                            {"x":Krc,"color":"#52525b","label":f"K={Krc:.0f}","dash":True}]
+                if barrier_on_rc: vlines_rc.append({"x":Hrc,"color":"#ef4444","label":f"H={Hrc:.0f}","dash":True})
 
-            svg_rc1 = svg_chart([
-                {"x":list(SRrc),"y":list(payoff_maturity_rc),"color":"#3f3f46","width":1.6,"dash":True,"label":"Remboursement à maturité (référence)"},
-                {"x":list(SRrc),"y":list(price_curve_rc),"color":"#f59e0b","width":2.2,"fill":True,"fill_color":"#f59e0b","label":"Prix actuel"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
-               vlines=vlines_rc, show_dot={"x":Src,"y":price_rc,"color":"#f59e0b","label":f"\u20ac{price_rc:.3f}"},
-               title="Prix de la note selon le spot", responsive=True)
-            svg_rc2 = svg_chart([
-                {"x":list(SRrc),"y":list(delta_curve_rc),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_rc, hline_zero=True,
-               show_dot={"x":Src,"y":delta_rc,"color":"#22c55e","label":f"{delta_rc:.4f}"},
-               title="\u0394 Delta selon le spot", responsive=True)
-            svg_rc3 = svg_chart([
-                {"x":list(SRrc),"y":list(gamma_curve_rc),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_rc, hline_zero=True,
-               show_dot={"x":Src,"y":gamma_rc,"color":"#a78bfa","label":f"{gamma_rc:.5f}"},
-               title="\u0393 Gamma selon le spot", responsive=True)
+                svg_rc1 = svg_chart([
+                    {"x":list(SRrc),"y":list(payoff_maturity_rc),"color":"#3f3f46","width":1.6,"dash":True,"label":"Remboursement à maturité (référence)"},
+                    {"x":list(SRrc),"y":list(price_curve_rc),"color":"#f59e0b","width":2.2,"fill":True,"fill_color":"#f59e0b","label":"Prix actuel"},
+                ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+                   vlines=vlines_rc, show_dot={"x":Src,"y":price_rc,"color":"#f59e0b","label":f"\u20ac{price_rc:.3f}"},
+                   title="Prix de la note selon le spot", responsive=True)
+                svg_rc2 = svg_chart([
+                    {"x":list(SRrc),"y":list(delta_curve_rc),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
+                ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_rc, hline_zero=True,
+                   show_dot={"x":Src,"y":delta_rc,"color":"#22c55e","label":f"{delta_rc:.4f}"},
+                   title="\u0394 Delta selon le spot", responsive=True)
+                svg_rc3 = svg_chart([
+                    {"x":list(SRrc),"y":list(gamma_curve_rc),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
+                ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_rc, hline_zero=True,
+                   show_dot={"x":Src,"y":gamma_rc,"color":"#a78bfa","label":f"{gamma_rc:.5f}"},
+                   title="\u0393 Gamma selon le spot", responsive=True)
 
-            crc1, crc2 = st.columns(2)
-            with crc1: show_svg(svg_rc1, full_width=True, title="Prix selon le spot", chart_id="rc_price")
-            with crc2: show_svg(svg_rc2, full_width=True, title="Delta selon le spot", chart_id="rc_delta")
-            crc3, _crc_pad = st.columns(2)
-            with crc3: show_svg(svg_rc3, full_width=True, title="Gamma selon le spot", chart_id="rc_gamma")
+                crc1, crc2 = st.columns(2)
+                with crc1: show_svg(svg_rc1, full_width=True, title="Prix selon le spot", chart_id="rc_price")
+                with crc2: show_svg(svg_rc2, full_width=True, title="Delta selon le spot", chart_id="rc_delta")
+                crc3, _crc_pad = st.columns(2)
+                with crc3: show_svg(svg_rc3, full_width=True, title="Gamma selon le spot", chart_id="rc_gamma")
+
+            else:
+                # ---- Worst-of : moteur Monte-Carlo corrélé (reverse_convertible_worst_of_price) ----
+                strike_pct = Krc / Src
+                barrier_pct = (Hrc / Src) if barrier_on_rc else 0.0
+                n_obs_eff = n_obs_rc if barrier_on_rc else 1
+
+                _wo_rc_args = (n_assets_rc, Trc, n_obs_eff, r_rc, tuple(q_list_rc), tuple(sigma_list_rc), corr_rc,
+                               strike_pct, barrier_pct, coupon_rc, barrier_on_rc, n_paths_rc)
+                price_rc, stderr_rc, proba_loss_rc, proba_touch_rc, proba_worst_asset_rc = reverse_convertible_worst_of_price(*_wo_rc_args)
+                # Sensibilité à la corrélation (métrique propre au Worst-of, mêmes tirages -> peu de bruit MC)
+                price_corr_up_rc = reverse_convertible_worst_of_price(*(_wo_rc_args[:6] + (min(corr_rc+0.1,0.95),) + _wo_rc_args[7:]))[0]
+                price_corr_dn_rc = reverse_convertible_worst_of_price(*(_wo_rc_args[:6] + (max(corr_rc-0.1,0.0),) + _wo_rc_args[7:]))[0]
+                ic95_rc = 1.96 * stderr_rc
+                coupon_total = coupon_rc * 100 * Trc
+
+                st.markdown("---")
+                badge_rc = ("BRC" if barrier_on_rc else "RC") + " WORST-OF"
+                diff_par = price_rc - 100
+                hero_col, greeks_col = st.columns([5, 7], gap="large")
+                with hero_col:
+                    _touch_span = (f'<span>Proba barrière touchée = {proba_touch_rc*100:.1f}%</span>'
+                                  if barrier_on_rc else '<span>Sans barrière (RC simple)</span>')
+                    st.markdown(f"""
+                    <div class="ph">
+                      <div>
+                        <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
+                        <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                        <div class="ph-sub">
+                          <span>IC95% Monte-Carlo = \u00b1{ic95_rc:.3f}\u20ac</span><span>Proba perte capital = {proba_loss_rc*100:.1f}%</span>
+                          {_touch_span}
+                        </div>
+                      </div>
+                      <span class="ph-badge ph-p">{badge_rc}</span>
+                    </div>""", unsafe_allow_html=True)
+                with greeks_col:
+                    section_header("Sensibilité à la corrélation & risque de dispersion")
+                    gdata_wo_rc = [("\u03c1+", "Corr. +10pts", price_corr_up_rc-price_rc, "+.3f", "#22c55e", "Impact sur le prix (\u20ac)"),
+                                   ("\u03c1-", "Corr. \u221210pts", price_corr_dn_rc-price_rc, "+.3f", "#ef4444", "Impact sur le prix (\u20ac)")]
+                    cards_html_wo_rc = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_wo_rc)
+                    st.markdown(f'<div class="greeks-grid" style="grid-template-columns:repeat(2,1fr)">{cards_html_wo_rc}</div>',
+                               unsafe_allow_html=True)
+                    _pw_html_rc = ''.join(f'<span style="margin-right:14px">Actif {j+1} : <b>{p*100:.1f}%</b></span>'
+                                          for j,p in enumerate(proba_worst_asset_rc))
+                    st.markdown(f'<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
+                               f'Comme pour le Phoenix Worst-of, une corrélation plus élevée <b>augmente</b> le prix '
+                               f'de la note (les actifs bougent ensemble, moins de risque que l\'un d\'eux décroche '
+                               f'seul et entraîne une perte en capital) - la corrélation ne s\'inverse <b>pas</b> '
+                               f'entre les deux structures, elle joue dans le <b>même sens</b>. Ce qui bouge en sens '
+                               f'inverse, c\'est la valeur du <i>put Worst-of</i> vendu par l\'investisseur (elle '
+                               f'augmente quand la corrélation baisse) - mais son effet sur le prix de la note reste '
+                               f'identique à celui du Phoenix. Probabilité que chaque actif soit le moins performant '
+                               f'à l\'échéance : {_pw_html_rc}</div>', unsafe_allow_html=True)
+
+                section_header("Calendrier / monitoring de la barrière")
+                if barrier_on_rc:
+                    st.markdown(f'<div style="font-size:.72rem;color:var(--t3);line-height:1.7">'
+                               f'Barrière H surveillée sur <b>{n_obs_eff}</b> date(s) simulée(s) '
+                               f'({ {"continu":"approximation quotidienne plafonnée","discret":"dates discrètes choisies","echeance":"à l\'échéance uniquement"}[monitor_rc] }), '
+                               f'sur le <b>pire performeur</b> du panier à chaque date.</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown('<div style="font-size:.72rem;color:var(--t3);line-height:1.7">'
+                               'Pas de barrière (Reverse Convertible simple) : seul le niveau du pire performeur '
+                               'à l\'<b>échéance</b> détermine la perte en capital.</div>', unsafe_allow_html=True)
+
+                section_header("Visualisations")
+                corr_grid_rc = np.linspace(0.0, 0.95, 12)
+                _n_paths_curve_rc = min(n_paths_rc, 6000)
+                price_vs_corr_rc = np.array([
+                    reverse_convertible_worst_of_price(n_assets_rc, Trc, n_obs_eff, r_rc, tuple(q_list_rc), tuple(sigma_list_rc), c,
+                                                       strike_pct, barrier_pct, coupon_rc, barrier_on_rc, _n_paths_curve_rc)[0]
+                    for c in corr_grid_rc])
+
+                svg_wo_rc1 = svg_chart([
+                    {"x":list(corr_grid_rc*100),"y":list(price_vs_corr_rc),"color":"#f59e0b","width":2.2,"fill":True,"fill_color":"#f59e0b",
+                     "label":"Prix de la note"},
+                ], W=680, H=260, xlabel="Corrélation moyenne entre actifs (%)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+                   vlines=[{"x":corr_rc*100,"color":"#3b82f6","label":f"\u03c1={corr_rc*100:.0f}%","dash":True}],
+                   show_dot={"x":corr_rc*100,"y":price_rc,"color":"#f59e0b","label":f"\u20ac{price_rc:.3f}"},
+                   title="Prix de la note selon la corrélation entre actifs", responsive=True)
+                show_svg(svg_wo_rc1, full_width=True, title="Prix selon la corrélation", chart_id="rc_price_corr")
+
+                st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
+                           'Exactement comme pour l\'Autocall Worst-of, le prix <b>augmente avec la corrélation</b> : '
+                           'plus les actifs bougent ensemble, moins il y a de risque que l\'un d\'eux décroche loin '
+                           'des autres et entraîne le pire performeur sous K (ou sous H pour une BRC). À la limite '
+                           '\u03c1\u2192100%, une RC/BRC Worst-of se comporte comme une RC/BRC mono-actif ; à \u03c1 '
+                           'bas, la dispersion entre actifs domine et le prix chute nettement en dessous de cette '
+                           'référence - ce qui, en pratique, oblige l\'émetteur à proposer un coupon plus élevé pour '
+                           'rester proche du pair (100).</div>', unsafe_allow_html=True)
 
     # ═══════════════════ BONUS CERTIFICATE ═══════════════════
     elif prod_family == "bonus":
