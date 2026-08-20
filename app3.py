@@ -3464,8 +3464,8 @@ with tab4:
         with bn3:
             Hbn = st.slider("Barrière H (% S\u2080)", 20, 99, 70, 1, key="bn_h") / 100 * Sbn
         with bn4:
-            field_label("Maturité (A / M / J)")
-            Trc = mat_inline("rc_t", 1, 0, 0)
+            field_label("Maturité (A / M / J)") 
+            Tbn = mat_inline("bn_t", 1, 0, 0)
 
         bn5, bn6, bn7 = st.columns(3)
         with bn5:
