@@ -129,10 +129,10 @@ def barrier_price(S, K, H, T, r, sigma, q=0.0, otype="call", barrier_dir="up", k
     return max(val, 0.0)
 
 def barrier_greeks(S, K, H, T, r, sigma, q=0.0, otype="call", barrier_dir="up", knock="out", rebate=0.0):
-    """Grecques par différences finies sur la formule fermée (lisses, sans bruit de simulation).
+    """Grecques par différences finies sur la formule fermée (lisses et sans bruit de simulation).
     Note pédagogique : Delta/Gamma peuvent devenir très marqués à l'approche de la barrière —
     c'est un comportement normal et attendu des options à barrière (difficulté de couverture connue
-    des vendeurs de shark notes), pas une erreur de calcul."""
+    des vendeurs de shark notes)"""
     if T <= 1e-9 or sigma <= 1e-9:
         return dict(delta=0.0, gamma=0.0, theta=0.0, vega=0.0, rho=0.0)
     f = lambda s, t, vol, rr: barrier_price(s, K, H, t, rr, vol, q, otype, barrier_dir, knock, rebate)
@@ -180,7 +180,6 @@ def digital_greeks(S, K, T, r, sigma, q=0.0, otype="call", style="cash", Q=100.0
     theta = f(S, max(T-hT,1e-6), sigma, r) - p0
     rho   = (f(S,T,sigma,r+hR) - f(S,T,sigma,r-hR)) / (2*hR) / 100
     return dict(delta=delta, gamma=gamma, theta=theta, vega=vega, rho=rho)
-
 
 # ─────────────────────────────────────────────────────────────
 #  BARRIÈRE EUROPÉENNE — formule fermée (spread + digitale), sans Monte-Carlo
@@ -268,7 +267,7 @@ def _autocall_paths(S0, T, n_obs, r, q, sigma, n_paths=20000, seed=42):
 @st.cache_data(show_spinner=False)
 def autocall_price(S, S_ref, T, n_obs, r, q, sigma, autocall_pct, coupon_pct, protect_pct,
                     coupon_rate, step_down_pct=0.0, memory=True, n_paths=20000, seed=42):
-    """Prix Monte-Carlo (pour 100\u20ac de nominal) d'une note Autocall / Phoenix à mémoire de coupon.
+    """Prix Monte-Carlo (pour 100€ de nominal) d'une note Autocall / Phoenix à mémoire de coupon.
     - S            : spot COURANT, point de départ de la simulation (permet de repricer la note déjà émise)
     - S_ref        : spot de RÉFÉRENCE à l'émission - fixe les barrières en absolu (S_ref \u00d7 %) et sert de
                      base à la participation au capital. Contrairement à S, S_ref ne bouge pas quand on
@@ -441,7 +440,7 @@ def autocall_worst_of_price(n_assets, T, n_obs, r, q_tuple, sigma_tuple, corr,
 def reverse_convertible_worst_of_price(n_assets, T, n_obs, r, q_tuple, sigma_tuple, corr,
                                         strike_pct, barrier_pct, coupon_rate, barrier_on=True,
                                         n_paths=12000, seed=42):
-    """Prix Monte-Carlo (pour 100\u20ac de nominal) d'une Reverse Convertible / Barrier Reverse
+    """Prix Monte-Carlo (pour 100€ de nominal) d'une Reverse Convertible / Barrier Reverse
     Convertible Worst-of.
     - strike_pct / barrier_pct : K et H exprimés en fraction du niveau initial normalisé (1.0 =
       100%, même convention que autocall_pct/coupon_pct/protect_pct dans le moteur Autocall Worst-of)
@@ -745,9 +744,9 @@ def barrier_monitor_selector(key_prefix, T):
     Retourne (monitor, n_obs) prêts à passer à priced_barrier() / priced_barrier_greeks()."""
     monitor = st.radio("Type de barrière", ["continu", "discret", "echeance"],
                        horizontal=True, key=f"{key_prefix}_monitor",
-                       format_func=lambda x: {"continu": "Américaine)",
-                                              "discret": "Bermudienne)",
-                                              "echeance": "Européenne)"}[x],
+                       format_func=lambda x: {"continu": "Américaine",
+                                              "discret": "Bermudienne",
+                                              "echeance": "Européenne"}[x],
                        help="Détermine à quels instants le franchissement de la barrière est vérifié. "
                             "Détails dans le glossaire.")
     n_obs = None
@@ -920,7 +919,7 @@ def scenario_grid_html(S, K, T, r, sigma, q, otype, pos_sign):
     for ds in spot_pcts:
         S_n = S * (1 + ds/100)
         rl = f"S {ds:+d}%" if ds != 0 else "S actuel"
-        h += f'<tr><td style="font-weight:700;color:var(--t2);background:var(--s2);text-align:left;padding-left:12px">{rl}<br><span style="font-size:.68rem;color:var(--t3)">{S_n:.1f} \u20ac</span></td>'
+        h += f'<tr><td style="font-weight:700;color:var(--t2);background:var(--s2);text-align:left;padding-left:12px">{rl}<br><span style="font-size:.68rem;color:var(--t3)">{S_n:.1f} €</span></td>'
         for dv in vol_pps:
             sig_n = max(sigma + dv/100, 0.01)
             p = bs_price(S_n, K, T, r, sig_n, q, otype) * pos_sign
@@ -943,8 +942,8 @@ def risk_reward_html(max_gain, max_loss):
             f'<span class="rr-ratio">{ratio_str}</span></div>'
             f'<div class="rr-bar"><div class="rr-gain" style="width:{gain_pct:.1f}%"></div>'
             f'<div class="rr-loss" style="width:{100-gain_pct:.1f}%"></div></div>'
-            f'<div class="rr-vals"><span style="color:#22c55e">+\u20ac{abs(max_gain):.2f}</span>'
-            f'<span style="color:#ef4444">\u2212\u20ac{abs(max_loss):.2f}</span></div></div>')
+            f'<div class="rr-vals"><span style="color:#22c55e">+€{abs(max_gain):.2f}</span>'
+            f'<span style="color:#ef4444">\u2212€{abs(max_loss):.2f}</span></div></div>')
 
 def prob_bar_html(p_profit, label="Probabilité de profit"):
     """Probability bar visualization."""
@@ -989,15 +988,15 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
     svg1 = svg_chart([
         {"x":list(SR),"y":list(intr),"color":"#52525b","width":1,"dash":True,"label":"Valeur intrinsèque"},
         {"x":list(SR),"y":list(prices),"color":"#7affdc","width":2.2,"fill":True,"label":f"Prix {otype.upper()}"},
-    ], W=W, H=H, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac)",
+    ], W=W, H=H, xlabel="Spot (€)", ylabel="Prix (€)",
        vlines=[vl(S,"#3b82f6",f"S={S:.0f}"), vl(K,"#7affdc",f"K={K:.0f}")],
-       show_dot={"x":S,"y":cur,"color":"#7affdc","label":f"\u20ac{cur:.3f}"},
+       show_dot={"x":S,"y":cur,"color":"#7affdc","label":f"€{cur:.3f}"},
        title="Prix de l'option selon le spot", responsive=_rsp)
 
     # 2 Delta
     svg2 = svg_chart([
         {"x":list(SR),"y":list(deltas),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
-    ], W=W, H=H, xlabel="Spot (\u20ac)", ylabel="Delta",
+    ], W=W, H=H, xlabel="Spot (€)", ylabel="Delta",
        vlines=[vl(S,"#3b82f6",f"S={S:.0f}"), vl(K,"#52525b")],
        hline_zero=True,
        show_dot={"x":S,"y":G["delta"],"color":"#22c55e","label":f"{G['delta']:.4f}"},
@@ -1006,7 +1005,7 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
     # 3 Gamma
     svg3 = svg_chart([
         {"x":list(SR),"y":list(gammas),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
-    ], W=W, H=H, xlabel="Spot (\u20ac)", ylabel="Gamma",
+    ], W=W, H=H, xlabel="Spot (€)", ylabel="Gamma",
        vlines=[vl(S,"#3b82f6",f"S={S:.0f}"), vl(K,"#52525b")],
        hline_zero=True,
        show_dot={"x":S,"y":G["gamma"],"color":"#a78bfa","label":f"{G['gamma']:.5f}"},
@@ -1015,17 +1014,17 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
     # 4 Time Decay
     svg4 = svg_chart([
         {"x":list(TR),"y":list(p_T),"color":"#f59e0b","width":2.2,"fill":True,"fill_color":"#f59e0b","label":"Prix"},
-    ], W=W, H=H, xlabel="Maturité (en année)", ylabel="Prix (\u20ac)",
+    ], W=W, H=H, xlabel="Maturité (en année)", ylabel="Prix (€)",
        vlines=[vl(T,"#f59e0b",fmt_mat(T))],
-       show_dot={"x":T,"y":cur,"color":"#f59e0b","label":f"\u20ac{cur:.3f}"},
+       show_dot={"x":T,"y":cur,"color":"#f59e0b","label":f"€{cur:.3f}"},
        title="\u0398 Theta - érosion temporelle (Time Decay)", responsive=_rsp)
 
     # 5 Prix vs Vol
     svg5 = svg_chart([
         {"x":list(sigR*100),"y":list(p_sig),"color":"#3b82f6","width":2.2,"fill":True,"fill_color":"#3b82f6","label":"Prix"},
-    ], W=W, H=H, xlabel="Volatilité implicite (%)", ylabel="Prix (\u20ac)",
+    ], W=W, H=H, xlabel="Volatilité implicite (%)", ylabel="Prix (€)",
        vlines=[vl(sigma*100,"#3b82f6",f"\u03c3={sigma*100:.1f}%")],
-       show_dot={"x":sigma*100,"y":cur,"color":"#3b82f6","label":f"\u20ac{cur:.3f}"},
+       show_dot={"x":sigma*100,"y":cur,"color":"#3b82f6","label":f"€{cur:.3f}"},
        title="\u03bd Vega - Sensibilité à la volatilité implicite", responsive=_rsp)
     
     return svg1 ,svg2 ,svg3 ,svg4 ,svg5 
@@ -1101,7 +1100,7 @@ def build_payoff(name, S, K, Tc, Tp, r, sc, sp, q=0.0, T_pct=0.5, W=1100, H=380)
 
     svg = svg_chart([
         {"x":list(SR),"y":list(pnl_pre),"color":"#ffffff","width":3,"fill_pos_neg":True},
-    ], W=W, H=H, xlabel="Prix du sous-jacent (\u20ac)", ylabel="P&L (\u20ac)",
+    ], W=W, H=H, xlabel="Prix du sous-jacent (€)", ylabel="P&L (€)",
        hline_zero=True, vlines=vlines,
        title=f"{name} - Profit / Perte",
        PAD_L=60, PAD_R=24, PAD_T=30, PAD_B=46,
@@ -1162,9 +1161,9 @@ def build_custom_payoff(legs, S_ref, name, T_pct=0.5, W=1100, H=420):
 
     nc="encaissé" if net_prem<0 else "payé"
     svg = svg_chart(series, W=W, H=H,
-                    xlabel="Prix à l'expiration (\u20ac)", ylabel="P&L (\u20ac)",
+                    xlabel="Prix à l'expiration (€)", ylabel="P&L (€)",
                     hline_zero=True, vlines=vlines,
-                    title=f"{name}  \u00b7  Prime nette {nc} : \u20ac{abs(net_prem):.4f}",
+                    title=f"{name}  \u00b7  Prime nette {nc} : €{abs(net_prem):.4f}",
                     PAD_L=62, PAD_R=24, PAD_T=20, PAD_B=48,
                     responsive=True)
     return svg, total, net_prem, legend_items, total_pre
@@ -1185,7 +1184,7 @@ def build_custom_greeks(legs, S_ref, W=1100, H=260):
 
     vl=[{"x":S_ref,"color":"#3b82f6","dash":True}]
     kwargs=dict(W=W//4, H=H, hline_zero=True, vlines=vl,
-                xlabel="Spot (\u20ac)", PAD_L=48,PAD_R=12,PAD_T=30,PAD_B=36,
+                xlabel="Spot (€)", PAD_L=48,PAD_R=12,PAD_T=30,PAD_B=36,
                 responsive=True)
 
     svgs=[]
@@ -1378,13 +1377,13 @@ with st.sidebar:
 
     # ── Sous-jacent & Strike ────────────────────────────────
     st.markdown('<div class="sb-title">Sous-jacent & Strike</div>', unsafe_allow_html=True)
-    field_label("Spot S\u2080  (\u20ac)")
+    field_label("Spot S\u2080  (€)")
     S = st.number_input("S0", value=st.session_state.get("shared_S", 100.0),
                         step=1.0, label_visibility="collapsed",
                         help="Prix actuel de l'actif sur le marché", key="t1_S")
     st.session_state["shared_S"] = S
 
-    field_label("Strike K  (\u20ac)")
+    field_label("Strike K  (€)")
     K = st.number_input("K", value=st.session_state.get("shared_K", 100.0),
                         step=1.0, label_visibility="collapsed",
                         help="Prix d'exercice de l'option", key="t1_K")
@@ -1439,8 +1438,8 @@ with st.sidebar:
     # ── Volatilité implicite ────────────────────────────────
     st.markdown("---")
     st.markdown('<div class="sb-title">Volatilité implicite</div>', unsafe_allow_html=True)
-    field_label("Prix de marché observé (\u20ac)")
-    mkt = st.number_input("Prix observé (\u20ac)", value=0.0, step=0.01, min_value=0.0,
+    field_label("Prix de marché observé (€)")
+    mkt = st.number_input("Prix observé (€)", value=0.0, step=0.01, min_value=0.0,
                           label_visibility="collapsed",
                           help="Prix affiché chez votre courtier \u2192 retrouve la vol. implicite",
                           key="sb_mkt")
@@ -1486,7 +1485,7 @@ with tab1:
         <div class="ph">
           <div>
             <div class="ph-ey">Prix Black-Scholes</div>
-            <div class="ph-row"><span class="ph-val">{price:.4f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+            <div class="ph-row"><span class="ph-val">{price:.4f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
             <div class="ph-sub">
               <span>d\u2081 = {d1v:.4f}</span><span>d\u2082 = {d2v:.4f}</span>
               <span>N(d\u2081) = {norm.cdf(d1v):.4f}</span><span>N(d\u2082) = {norm.cdf(d2v):.4f}</span>
@@ -1529,11 +1528,11 @@ $$d_1 = \frac{\ln(S/K) + (r - q + \sigma^2/2)\,T}{\sigma\sqrt{T}} \qquad d_2 = d
             a,b,c_=gamma_theta_msg(G["gamma"],G["theta"]); signal_card(a,b,c_)
 
     with greeks_col:
-        gdata=[("\u0394","Delta",G["delta"],".4f","#22c55e","Sensibilité au spot (\u20ac/\u20ac)"),
+        gdata=[("\u0394","Delta",G["delta"],".4f","#22c55e","Sensibilité au spot (€/€)"),
                ("\u0393","Gamma",G["gamma"],".5f","#a78bfa","Convexité du Delta"),
-               ("\u0398","Theta",G["theta"],"+.4f","#f59e0b","Effet du temps (\u20ac/jour)"),
-               ("\u03bd","Vega", G["vega"], ".4f","#3b82f6","Effet de la volatilité (\u20ac/%)"),
-               ("\u03c1","Rho",  G["rho"],  "+.4f","#ef4444","Effet des taux (\u20ac/%)"),
+               ("\u0398","Theta",G["theta"],"+.4f","#f59e0b","Effet du temps (€/jour)"),
+               ("\u03bd","Vega", G["vega"], ".4f","#3b82f6","Effet de la volatilité (€/%)"),
+               ("\u03c1","Rho",  G["rho"],  "+.4f","#ef4444","Effet des taux (€/%)"),
                ("\u039b","Vanna",G["vanna"],"+.4f","#71717a","Cross Delta / Volatilité")]
         cards_html = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata)
         st.markdown(f'<div class="card" style="height:100%">'
@@ -1543,11 +1542,11 @@ $$d_1 = \frac{\ln(S/K) + (r - q + \sigma^2/2)\,T}{\sigma\sqrt{T}} \qquad d_2 = d
         st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
         with st.expander("Tableau détaillé des grecques"):
             df_g=pd.DataFrame([
-                {"Grec":"\u0394 Delta","Valeur":f"{G['delta']:+.4f}","Unité":"\u20ac/\u20ac","Sens":"+ si haussier"},
+                {"Grec":"\u0394 Delta","Valeur":f"{G['delta']:+.4f}","Unité":"€/€","Sens":"+ si haussier"},
                 {"Grec":"\u0393 Gamma","Valeur":f"{G['gamma']:.4f}","Unité":"-","Sens":"+ si convexité favorable"},
-                {"Grec":"\u0398 Theta","Valeur":f"{G['theta']:+.4f}","Unité":"\u20ac/j","Sens":"+ si le temps aide"},
-                {"Grec":"\u03bd Vega","Valeur":f"{G['vega']:.4f}","Unité":"\u20ac/%","Sens":"+ si vol. implicite \u2191"},
-                {"Grec":"\u03c1 Rho","Valeur":f"{G['rho']:+.4f}","Unité":"\u20ac/%","Sens":"+ si taux \u2191"},
+                {"Grec":"\u0398 Theta","Valeur":f"{G['theta']:+.4f}","Unité":"€/j","Sens":"+ si le temps aide"},
+                {"Grec":"\u03bd Vega","Valeur":f"{G['vega']:.4f}","Unité":"€/%","Sens":"+ si vol. implicite \u2191"},
+                {"Grec":"\u03c1 Rho","Valeur":f"{G['rho']:+.4f}","Unité":"€/%","Sens":"+ si taux \u2191"},
                 {"Grec":"\u039b Vanna","Valeur":f"{G['vanna']:+.4f}","Unité":"-","Sens":"Cross delta/vol"},
             ])
             st.dataframe(df_g.set_index("Grec"),use_container_width=True)
@@ -1694,8 +1693,8 @@ with tab2:
     Gm={k:(G2c[k]+G2p[k])*adj/2 for k in G2c}
     _g2data=[("\u0394","Delta","delta",".4f","#22c55e","Sensibilité au prix"),
              ("\u0393","Gamma","gamma",".5f","#a78bfa","Convexité"),
-             ("\u0398","Theta","theta","+.5f","#f59e0b","Effet du temps (\u20ac/j)"),
-             ("\u03bd","Vega","vega",".4f","#3b82f6","Effet volatilité (\u20ac/%)")]
+             ("\u0398","Theta","theta","+.5f","#f59e0b","Effet du temps (€/j)"),
+             ("\u03bd","Vega","vega",".4f","#3b82f6","Effet volatilité (€/%)")]
     _g2html = ''.join(f'<div>{greek_card_html(sym,nm,Gm[key],fmt,color,desc)}</div>' for sym,nm,key,fmt,color,desc in _g2data)
     st.markdown(f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">{_g2html}</div>', unsafe_allow_html=True)
 
@@ -1811,7 +1810,7 @@ with tab3:
         _synth_note = BUILDER_SYNTHETIC_NOTE.get(tpl_sel, "")
         _synth_html = f' <br><b>Note :</b> {_synth_note}' if _synth_note else ""
         st.markdown(f'<div class="tpl-info">Ce template va configurer <b>{tpl["n"]} jambe(s)</b> '
-                    f'basés sur le strike K = {st.session_state.get("shared_K",100.0):.1f} \u20ac{_synth_html}</div>',
+                    f'basés sur le strike K = {st.session_state.get("shared_K",100.0):.1f} €{_synth_html}</div>',
                     unsafe_allow_html=True)
 
         def _apply_template():
@@ -1965,10 +1964,10 @@ with tab3:
                     index=0 if d["inst"]=="call" else 1,key=f"li_{i}",
                     help="Call : option d'achat \u00b7 Put : option de vente")
             with lc2_:
-                S_l=st.number_input("Spot S\u2080 (\u20ac)",value=d["S"],step=1.0,key=f"ls_{i}",
+                S_l=st.number_input("Spot S\u2080 (€)",value=d["S"],step=1.0,key=f"ls_{i}",
                     help="Prix actuel du sous-jacent")
             with lc3_:
-                K_l=st.number_input("Strike K (\u20ac)",value=d["K"],step=0.5,key=f"lk_{i}",
+                K_l=st.number_input("Strike K (€)",value=d["K"],step=0.5,key=f"lk_{i}",
                     help="Prix d'exercice")
             with lc4_:
                 qty=st.number_input("Quantité",1,100,d["qty"],1,key=f"lq_{i}",help="Nombre de contrats")
@@ -2004,7 +2003,7 @@ with tab3:
                 f'<span style="font-family:\'DM Mono\',monospace;font-size:1.05rem;font-weight:700;'
                 f'background:linear-gradient(135deg,#60a5fa 0%,#a78bfa 100%,#c084fc 100%);'
                 f'-webkit-background-clip:text;-webkit-text-fill-color:transparent">'
-                f'\u20ac{prem:.4f}</span>'
+                f'€{prem:.4f}</span>'
                 f'</div></div>', unsafe_allow_html=True)
 
             legs_cfg.append(dict(active=True,dir=direction,inst=instrument,
@@ -2034,12 +2033,12 @@ with tab3:
         st.markdown(f"""
         <div class="tbar">
           <div class="tbi"><div class="tbl">Prime nette</div>
-            <div class="tbv" style="color:{premium_color}">\u20ac{abs(net_premium):.4f}</div>
+            <div class="tbv" style="color:{premium_color}">€{abs(net_premium):.4f}</div>
             <div style="font-size:.68rem;color:#a1a1aa">{premium_label}</div></div>
           <div class="tbi"><div class="tbl">\u0394 Delta</div><div class="tbv" style="color:{delta_color}">{PD:+.4f}</div></div>
           <div class="tbi"><div class="tbl">\u0393 Gamma</div><div class="tbv" style="color:{gamma_color}">{PG:+.5f}</div></div>
-          <div class="tbi"><div class="tbl">\u0398 Theta \u20ac/j</div><div class="tbv" style="color:{theta_color}">{PT:+.5f}</div></div>
-          <div class="tbi"><div class="tbl">\u03bd Vega \u20ac/%</div><div class="tbv" style="color:{vega_color}">{PV:+.4f}</div></div>
+          <div class="tbi"><div class="tbl">\u0398 Theta €/j</div><div class="tbv" style="color:{theta_color}">{PT:+.5f}</div></div>
+          <div class="tbi"><div class="tbl">\u03bd Vega €/%</div><div class="tbv" style="color:{vega_color}">{PV:+.4f}</div></div>
         </div>""", unsafe_allow_html=True)
 
         section_header("Exposition du portefeuille")
@@ -2100,8 +2099,8 @@ with tab3:
         be_n=len(np.where(np.diff(np.sign(total_pnl)))[0])
         st.markdown(f"""
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px">
-          <div class="tbi"><div class="tbl">Gain max borné</div><div class="tbv" style="color:#22c55e">\u20ac{mx_v:.2f}</div></div>
-          <div class="tbi"><div class="tbl">Perte max borné</div><div class="tbv" style="color:#ef4444">\u20ac{mn_v:.2f}</div></div>
+          <div class="tbi"><div class="tbl">Gain max borné</div><div class="tbv" style="color:#22c55e">€{mx_v:.2f}</div></div>
+          <div class="tbi"><div class="tbl">Perte max borné</div><div class="tbv" style="color:#ef4444">€{mn_v:.2f}</div></div>
           <div class="tbi"><div class="tbl">Break-evens</div><div class="tbv" style="color:#f59e0b">{be_n}</div></div>
           <div class="tbi"><div class="tbl">Jambes actives</div><div class="tbv" style="color:#3b82f6">{len(active_legs)}</div></div>
         </div>""", unsafe_allow_html=True)
@@ -2115,7 +2114,7 @@ with tab3:
                 rows_l.append({"Jambe":LNAMES[i],"Sens":"Achat" if leg["dir"]==1 else "Vente",
                     "Type":leg["inst"].upper(),"S\u2080":f"{leg['S']:.1f}","Strike":f"{leg['K']:.1f}",
                     "Maturité":fmt_mat(leg["T"]),"\u03c3%":f"{leg['sigma']*100:.1f}","Qté":leg["qty"],
-                    "Prix":f"\u20ac{pr:.4f}","Co\u00fbt net":f'{"\u2212" if leg["dir"]==1 else "+"}\u20ac{pr*leg["qty"]:.4f}',
+                    "Prix":f"€{pr:.4f}","Co\u00fbt net":f'{"\u2212" if leg["dir"]==1 else "+"}€{pr*leg["qty"]:.4f}',
                     "\u0394":f"{leg['dir']*Gl['delta']*leg['qty']:+.4f}",
                     "\u0393":f"{leg['dir']*Gl['gamma']*leg['qty']:+.5f}",
                     "\u0398":f"{leg['dir']*Gl['theta']*leg['qty']:+.5f}",
@@ -2182,10 +2181,10 @@ with tab5:
     st.markdown('<div class="gls-divider">Les Grecques - Sensibilités</div>', unsafe_allow_html=True)
     cards2 = ""
     cards2 += gls_card("\u0394", "Delta", "Sensibilité au prix",
-        "Variation du prix de l'option pour <b>1\u20ac de mouvement</b> du sous-jacent. "
+        "Variation du prix de l'option pour <b>1€ de mouvement</b> du sous-jacent. "
         "Aussi interprété comme la <b>probabilité approximative</b> d'expirer ITM. "
         "Call : 0 à +1 \u00b7 Put : \u22121 à 0. "
-        "Un delta de 0.50 signifie que l'option gagne ~0.50\u20ac si le sous-jacent monte de 1\u20ac.",
+        "Un delta de 0.50 signifie que l'option gagne ~0.50€ si le sous-jacent monte de 1€.",
         "#22c55e", "34,197,94")
     cards2 += gls_card("\u0393", "Gamma", "Convexité",
         "Taux de variation du Delta : mesure la <b>convexité</b> de la position. "
@@ -2261,7 +2260,7 @@ with tab5:
     cards4 += gls_card("\U0001f988", "Shark Note", "Produit structuré \"aileron de requin\"",
         "Produit structuré combinant une option vanille et une barrière désactivante (knock-out). "
         "Son profil de gain - qui monte puis retombe brutalement si la barrière est touchée - dessine "
-        "une <b>nageoire de requin</b>, d'où le nom. "
+        "une <b>nageoire de requin</b>."
         "Combine souvent un <b>Call Up-and-Out</b> ou un <b>Put Down-and-Out</b> avec un rebate optionnel.",
         "#c084fc", "192,132,252")
     cards4 += gls_card("UOC", "Call Up-and-Out", "Haussier désactivant",
@@ -2447,7 +2446,7 @@ with tab4:
                                  help="Niveau déclenchant : au-dessus du spot si barrière 'Up', "
                                       "en-dessous du spot si barrière 'Down' (s'adapte automatiquement au produit choisi)")
         with bp4:
-            Rb = st.number_input("Rebate (\u20ac)", value=0.0, step=0.5, min_value=0.0, key="bo_rebate",
+            Rb = st.number_input("Rebate (€)", value=0.0, step=0.5, min_value=0.0, key="bo_rebate",
                                  help="Knock-Out : versé si la barrière est touchée (l'option devient nulle sinon). "
                                       "Knock-In : versé si la barrière n'est jamais touchée (l'option reste inactive sinon).")
 
@@ -2484,11 +2483,13 @@ with tab4:
                 st.markdown(f"""
                 <div class="ph">
                   <div>
-                    <div class="ph-ey">Prix option \u00e0 barri\u00e8re</div>
-                    <div class="ph-row"><span class="ph-val">{price:.4f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                    <div class="ph-ey">Prix option à barrière</div>
+                    <div class="ph-row"><span class="ph-val">{price:.4f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
                     <div class="ph-sub">
-                      <span>Vanille \u00e9quiv. = \u20ac{vanilla_ref:.4f}</span><span>{'Réduction' if reduction>=0 else 'Surcote'} = {reduction:+.1f}%</span>
-                      <span>H = {Hb:.1f}</span><span>Rebate = \u20ac{Rb:.2f}</span>
+                      <span>Vanille équiv. = €{vanilla_ref:.4f}</span>
+                      <span>{'Réduction' if reduction>=0 else 'Surcote'} = {reduction:+.1f}%</span>
+                      <span>H = {Hb:.1f}</span>
+                      <span>Rebate = €{Rb:.2f}</span>
                     </div>
                   </div>
                   <span class="ph-badge {badge_class}">{badge_text}</span>
@@ -2496,15 +2497,15 @@ with tab4:
             with greeks_col:
                 gdata_b = [("\u0394","Delta",Gb["delta"],".4f","#22c55e","Sensibilité au spot"),
                            ("\u0393","Gamma",Gb["gamma"],".5f","#a78bfa","Convexité (pic près de H)"),
-                           ("\u0398","Theta",Gb["theta"],"+.4f","#f59e0b","Effet du temps (\u20ac/jour)"),
-                           ("\u03bd","Vega", Gb["vega"], ".4f","#3b82f6","Effet volatilité (\u20ac/%)"),
-                           ("\u03c1","Rho",  Gb["rho"],  "+.4f","#ef4444","Effet des taux (\u20ac/%)")]
+                           ("\u0398","Theta",Gb["theta"],"+.4f","#f59e0b","Effet du temps (€/jour)"),
+                           ("\u03bd","Vega", Gb["vega"], ".4f","#3b82f6","Effet volatilité (€/%)"),
+                           ("\u03c1","Rho",  Gb["rho"],  "+.4f","#ef4444","Effet des taux (€/%)")]
                 cards_html_b = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_b)
                 st.markdown(f'<div class="card" style="height:100%">'
-                           f'<div class="ph-ey" style="margin-bottom:14px">Grecques (différences finies)</div>'
+                           f'<div class="ph-ey" style="margin-bottom:14px">Grecques</div>'
                            f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_b}</div>'
                            f'<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
-                           f'Delta/Gamma peuvent devenir très marqués à l\'approche de la barrière — '
+                           f'Delta/Gamma peuvent devenir très marqués à l\'approche de la barrière - '
                            f'c\'est un comportement normal des options à barrière, connu comme un risque de couverture pour '
                            f'le vendeur d\'un produit à barrière.</div></div>', unsafe_allow_html=True)
 
@@ -2522,7 +2523,7 @@ with tab4:
             price_vs_vol = np.array([priced_barrier(Sb, Kb, Hb, Tb, rb, s, qb, b_otype, b_dir, b_knock, Rb, monitor_b, n_obs_b) for s in sigRb])
             vanilla_vs_vol = np.array([bs_price(Sb, Kb, Tb, rb, s, qb, b_otype) for s in sigRb])
 
-            acc = "#52525b"
+            acc = "#7affdc"
             _price_title = "Prix selon le spot" + (" - profil \"shark fin\"" if is_shark else "")
             _hvlines = [{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
                         {"x":Kb,"color":"#52525b","label":f"K={Kb:.0f}","dash":True},
@@ -2530,14 +2531,14 @@ with tab4:
 
             svg_bo1 = svg_chart([
                 {"x":list(SRb),"y":list(price_curve),"color":acc,"width":2.2,"fill":True,"fill_color":acc,"label":"Prix barrière"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac)",
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Prix (€)",
                vlines=_hvlines,
-               show_dot={"x":Sb,"y":price,"color":acc,"label":f"\u20ac{price:.3f}"},
+               show_dot={"x":Sb,"y":price,"color":acc,"label":f"€{price:.3f}"},
                title=_price_title, responsive=True)
 
             svg_bo2 = svg_chart([
                 {"x":list(SRb),"y":list(delta_curve),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta",
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Delta",
                vlines=[{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
                        {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}],
                hline_zero=True,
@@ -2546,7 +2547,7 @@ with tab4:
 
             svg_bo3 = svg_chart([
                 {"x":list(SRb),"y":list(gamma_curve),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma",
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Gamma",
                vlines=[{"x":Sb,"color":"#3b82f6","label":f"S={Sb:.0f}","dash":True},
                        {"x":Hb,"color":"#ef4444","label":f"H={Hb:.0f}","dash":True}],
                hline_zero=True,
@@ -2556,9 +2557,9 @@ with tab4:
             svg_bo4 = svg_chart([
                 {"x":list(sigRb*100),"y":list(vanilla_vs_vol),"color":"#3f3f46","width":1.6,"dash":True,"label":"Vanille équiv."},
                 {"x":list(sigRb*100),"y":list(price_vs_vol),"color":acc,"width":2.2,"fill":True,"fill_color":acc,"label":"Prix barrière"},
-            ], W=680, H=260, xlabel="Volatilité implicite (%)", ylabel="Prix (\u20ac)",
+            ], W=680, H=260, xlabel="Volatilité implicite (%)", ylabel="Prix (€)",
                vlines=[{"x":sigb*100,"color":"#f59e0b","label":f"\u03c3={sigb*100:.1f}%","dash":True}],
-               show_dot={"x":sigb*100,"y":price,"color":acc,"label":f"\u20ac{price:.3f}"},
+               show_dot={"x":sigb*100,"y":price,"color":acc,"label":f"€{price:.3f}"},
                title="Prix selon la volatilité - vs vanille", responsive=True)
 
             cbo1, cbo2 = st.columns(2)
@@ -2624,10 +2625,10 @@ with tab4:
         section_header("Rebate (compensation au déclenchement)")
         twr1, twr2 = st.columns(2)
         with twr1:
-            R_low = st.number_input("Rebate barrière basse (\u20ac)", value=0.0, step=0.5, min_value=0.0,
+            R_low = st.number_input("Rebate barrière basse (€)", value=0.0, step=0.5, min_value=0.0,
                                     key="tw_rlow", disabled=not tw_low_active)
         with twr2:
-            R_high = st.number_input("Rebate barrière haute (\u20ac)", value=0.0, step=0.5, min_value=0.0,
+            R_high = st.number_input("Rebate barrière haute (€)", value=0.0, step=0.5, min_value=0.0,
                                      key="tw_rhigh", disabled=not tw_high_active)
 
         twp5, twp6, twp7 = st.columns(3)
@@ -2689,28 +2690,29 @@ with tab4:
                 st.markdown(f"""
                 <div class="ph">
                   <div>
-                    <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
-                    <div class="ph-row"><span class="ph-val">{price_tw:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                    <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
+                    <div class="ph-row"><span class="ph-val">{price_tw:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
                     <div class="ph-sub">
-                      <span>Zéro-coupon = \u20ac{100*np.exp(-rtw*Ttw):.3f}</span><span>Impact rebate = {rebate_impact:+.3f}\u20ac</span>
+                      <span>Zéro-coupon = €{100*np.exp(-rtw*Ttw):.3f}</span>
+                      <span>Impact rebate = {rebate_impact:+.3f}€</span>
                       <span>Participation = {Ptw*100:.0f}%</span>
                     </div>
                   </div>
-                  <span class="ph-badge ph-c">TWIN WIN</span>
+                  <span class="ph-badge ph-c">TWIN-WIN</span>
                 </div>""", unsafe_allow_html=True)
             with greeks_col:
                 gdata_tw = [("\u0394","Delta",Gtw["delta"],".4f","#22c55e","Sensibilité au spot"),
                             ("\u0393","Gamma",Gtw["gamma"],".5f","#a78bfa","Convexité (double pic près des barrières)"),
-                            ("\u0398","Theta",Gtw["theta"],"+.4f","#f59e0b","Effet du temps (\u20ac/jour)"),
-                            ("\u03bd","Vega", Gtw["vega"], ".4f","#3b82f6","Effet volatilité (\u20ac/%)"),
-                            ("\u03c1","Rho",  Gtw["rho"],  "+.4f","#ef4444","Effet des taux (\u20ac/%)")]
+                            ("\u0398","Theta",Gtw["theta"],"+.4f","#f59e0b","Effet du temps (€/jour)"),
+                            ("\u03bd","Vega", Gtw["vega"], ".4f","#3b82f6","Effet volatilité (€/%)"),
+                            ("\u03c1","Rho",  Gtw["rho"],  "+.4f","#ef4444","Effet des taux (€/%)")]
                 cards_html_tw = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_tw)
                 st.markdown(f'<div class="card" style="height:100%">'
-                           f'<div class="ph-ey" style="margin-bottom:14px">Grecques de la note (différences finies)</div>'
+                           f'<div class="ph-ey" style="margin-bottom:14px">Grecques de la note</div>'
                            f'<div class="greeks-grid" style="grid-template-columns:repeat(5,1fr)">{cards_html_tw}</div>'
                            f'<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
-                           f'Un rebate de \u20ac{R_low:.2f} (basse) / \u20ac{R_high:.2f} (haute) ajoute '
-                           f'<b>{rebate_impact:+.3f}\u20ac</b> au prix de la note par rapport à un rebate nul : c\'est le coût '
+                           f'Un rebate de €{R_low:.2f} (basse) / €{R_high:.2f} (haute) ajoute '
+                           f'<b>{rebate_impact:+.3f}€</b> au prix de la note par rapport à un rebate nul : c\'est le coût '
                            f'de la compensation versée en cas de déclenchement.</div></div>', unsafe_allow_html=True)
 
             section_header("Visualisations")
@@ -2730,9 +2732,9 @@ with tab4:
 
             svg_tw1 = svg_chart([
                 {"x":list(SRtw),"y":list(payoff_no_breach),"color":"#3f3f46","width":1.6,"dash":True,"label":"Si jamais déclenché (référence)"},
-                {"x":list(SRtw),"y":list(price_curve_tw),"color":"#52525b","width":2.2,"fill":True,"fill_color":"#52525b","label":"Prix actuel de la note"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
-               vlines=vlines_tw, show_dot={"x":Stw,"y":price_tw,"color":"#52525b","label":f"\u20ac{price_tw:.3f}"},
+                {"x":list(SRtw),"y":list(price_curve_tw),"color":"#7affdc","width":2.2,"fill":True,"fill_color":"#7affdc","label":"Prix actuel de la note"},
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Prix (€, pour 100 de nominal)",
+               vlines=vlines_tw, show_dot={"x":Stw,"y":price_tw,"color":"#7affdc","label":f"€{price_tw:.3f}"},
                title="Prix de la note selon le spot", responsive=True)
 
             greeks_curve_tw = [_tw_note_greeks(s, Ttw, rtw, sigtw, qtw) for s in SRtw]
@@ -2740,13 +2742,13 @@ with tab4:
             gamma_curve_tw = np.array([g["gamma"] for g in greeks_curve_tw])
             svg_tw2 = svg_chart([
                 {"x":list(SRtw),"y":list(delta_curve_tw),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_tw, hline_zero=True,
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Delta", vlines=vlines_tw, hline_zero=True,
                show_dot={"x":Stw,"y":Gtw["delta"],"color":"#22c55e","label":f"{Gtw['delta']:.4f}"},
                title="\u0394 Delta selon le spot", responsive=True)
 
             svg_tw3 = svg_chart([
                 {"x":list(SRtw),"y":list(gamma_curve_tw),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_tw, hline_zero=True,
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Gamma", vlines=vlines_tw, hline_zero=True,
                show_dot={"x":Stw,"y":Gtw["gamma"],"color":"#a78bfa","label":f"{Gtw['gamma']:.5f}"},
                title="\u0393 Gamma selon le spot - double pic près des barrières", responsive=True)
 
@@ -2834,10 +2836,11 @@ with tab4:
                 st.markdown(f"""
                 <div class="ph">
                   <div>
-                    <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
-                    <div class="ph-row"><span class="ph-val">{price_ab:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                    <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
+                    <div class="ph-row"><span class="ph-val">{price_ab:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
                     <div class="ph-sub">
-                      <span>Zéro-coupon = \u20ac{100*np.exp(-rab*Tab):.3f}</span><span>Buffer B = {Bab:.1f}</span>
+                      <span>Zéro-coupon = €{100*np.exp(-rab*Tab):.3f}</span>
+                      <span>Buffer B = {Bab:.1f}</span>
                       <span>Gearing = {Gear_ab:.2f}\u00d7</span>
                     </div>
                   </div>
@@ -2846,9 +2849,9 @@ with tab4:
             with greeks_col:
                 gdata_ab = [("\u0394","Delta",Gab["delta"],".4f","#22c55e","Sensibilité au spot"),
                             ("\u0393","Gamma",Gab["gamma"],".5f","#a78bfa","Positif près de S\u2080, négatif près de B"),
-                            ("\u0398","Theta",Gab["theta"],"+.4f","#f59e0b","Effet du temps (\u20ac/jour)"),
-                            ("\u03bd","Vega", Gab["vega"], ".4f","#3b82f6","Effet volatilité (\u20ac/%)"),
-                            ("\u03c1","Rho",  Gab["rho"],  "+.4f","#ef4444","Effet des taux (\u20ac/%)")]
+                            ("\u0398","Theta",Gab["theta"],"+.4f","#f59e0b","Effet du temps (€/jour)"),
+                            ("\u03bd","Vega", Gab["vega"], ".4f","#3b82f6","Effet volatilité (€/%)"),
+                            ("\u03c1","Rho",  Gab["rho"],  "+.4f","#ef4444","Effet des taux (€/%)")]
                 cards_html_ab = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_ab)
                 st.markdown(f'<div class="card" style="height:100%">'
                            f'<div class="ph-ey" style="margin-bottom:14px">Grecques de la note</div>'
@@ -2874,20 +2877,20 @@ with tab4:
 
             svg_ab1 = svg_chart([
                 {"x":list(SRab),"y":list(payoff_maturity_ab),"color":"#3f3f46","width":1.6,"dash":True,"label":"Payoff à maturité"},
-                {"x":list(SRab),"y":list(price_curve_ab),"color":"#52525b","width":2.2,"fill":True,"fill_color":"#52525b","label":"Prix actuel de la note"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
-               vlines=vlines_ab, show_dot={"x":Sab,"y":price_ab,"color":"#52525b","label":f"\u20ac{price_ab:.3f}"},
+                {"x":list(SRab),"y":list(price_curve_ab),"color":"#7affdc","width":2.2,"fill":True,"fill_color":"#7affdc","label":"Prix actuel de la note"},
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Prix (€, pour 100 de nominal)",
+               vlines=vlines_ab, show_dot={"x":Sab,"y":price_ab,"color":"#7affdc","label":f"€{price_ab:.3f}"},
                title="Prix de la note selon le spot", responsive=True)
 
             svg_ab2b = svg_chart([
                 {"x":list(SRab),"y":list(delta_curve_ab),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_ab, hline_zero=True,
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Delta", vlines=vlines_ab, hline_zero=True,
                show_dot={"x":Sab,"y":Gab["delta"],"color":"#22c55e","label":f"{Gab['delta']:.4f}"},
                title="\u0394 Delta selon le spot", responsive=True)
 
             svg_ab2 = svg_chart([
                 {"x":list(SRab),"y":list(gamma_curve_ab),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_ab, hline_zero=True,
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Gamma", vlines=vlines_ab, hline_zero=True,
                show_dot={"x":Sab,"y":Gab["gamma"],"color":"#a78bfa","label":f"{Gab['gamma']:.4f}"},
                title="\u0393 Gamma selon le spot - positif (S\u2080) / négatif (B)", responsive=True)
 
@@ -3032,10 +3035,11 @@ with tab4:
             st.markdown(f"""
             <div class="ph">
               <div>
-                <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
-                <div class="ph-row"><span class="ph-val">{price_ac:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
+                <div class="ph-row"><span class="ph-val">{price_ac:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
                 <div class="ph-sub">
-                  <span>IC95% Monte-Carlo = \u00b1{ic95_ac:.3f}\u20ac</span><span>Vie moyenne = {vie_ac:.2f} an(s)</span>
+                  <span>IC95% Monte-Carlo = \u00b1{ic95_ac:.3f}€</span>
+                  <span>Vie moyenne = {vie_ac:.2f} an(s)</span>
                   <span>Proba perte capital = {proba_loss_ac*100:.1f}%</span>
                 </div>
               </div>
@@ -3044,7 +3048,7 @@ with tab4:
         with greeks_col:
             if not worst_of_ac:
                 gdata_ac = [("\u0394", "Delta", delta_ac, ".4f", "#22c55e", "Sensibilité au spot"),
-                            ("\u03bd", "Vega", vega_ac, ".4f", "#3b82f6", "Effet volatilité (\u20ac/%)")]
+                            ("\u03bd", "Vega", vega_ac, ".4f", "#3b82f6", "Effet volatilité (€/%)")]
                 cards_html_ac = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_ac)
                 st.markdown(f'<div class="card" style="height:100%">'
                            f'<div class="ph-ey" style="margin-bottom:14px">Sensibilités (Monte-Carlo, nombres aléatoires communs)</div>'
@@ -3055,8 +3059,8 @@ with tab4:
                            f'pour S\u2080\u00b1h) : cela annule l\'essentiel du bruit de simulation dans la différence.</div></div>',
                            unsafe_allow_html=True)
             else:
-                gdata_wo = [("\u03c1+", "Corr. +10pts", price_corr_up-price_ac, "+.3f", "#22c55e", "Impact sur le prix (\u20ac)"),
-                            ("\u03c1-", "Corr. \u221210pts", price_corr_dn-price_ac, "+.3f", "#ef4444", "Impact sur le prix (\u20ac)")]
+                gdata_wo = [("\u03c1+", "Corr. +10pts", price_corr_up-price_ac, "+.3f", "#22c55e", "Impact sur le prix (€)"),
+                            ("\u03c1-", "Corr. \u221210pts", price_corr_dn-price_ac, "+.3f", "#ef4444", "Impact sur le prix (€)")]
                 cards_html_wo = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_wo)
                 _pw_html = ''.join(f'<span style="margin-right:14px">Actif {j+1} : <b>{p*100:.1f}%</b></span>'
                                    for j,p in enumerate(proba_worst_asset_ac))
@@ -3080,7 +3084,7 @@ with tab4:
             _cum += p_i
             _bar_w = min(p_i*100*4, 100)
             _rows_ac += (f'<tr><td style="text-align:left;padding-left:12px">T+{t_i:.2f} an(s)</td>'
-                        f'<td>{ac_bar_i:.1f} \u20ac</td>'
+                        f'<td>{ac_bar_i:.1f} €</td>'
                         f'<td><div style="display:flex;align-items:center;gap:8px;justify-content:center">'
                         f'<div style="width:60px;height:6px;border-radius:3px;background:var(--s2);overflow:hidden">'
                         f'<div style="width:{_bar_w:.0f}%;height:100%;background:#3b82f6"></div></div>'
@@ -3109,15 +3113,15 @@ with tab4:
 
             svg_ac1 = svg_chart([
                 {"x":list(SRac),"y":list(payoff_never_called_ac),"color":"#3f3f46","width":1.6,"dash":True,
-                 "label":"Si jamais rappelée (référence à maturité)"},
-                {"x":list(SRac),"y":list(price_curve_ac),"color":"#52525b","width":2.2,"fill":True,"fill_color":"#52525b",
+                 "label":"Si jamais rappelée"},
+                {"x":list(SRac),"y":list(price_curve_ac),"color":"#7affdc","width":2.2,"fill":True,"fill_color":"#7affdc",
                  "label":"Prix actuel de la note (Monte-Carlo)"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Prix (€, pour 100 de nominal)",
                vlines=[{"x":S_ac,"color":"#3b82f6","label":f"S\u2080={S_ac:.0f}","dash":True},
                        {"x":S_ac*protect_pct,"color":"#ef4444","label":f"Protection={S_ac*protect_pct:.0f}","dash":True},
                        {"x":S_ac*coupon_pct,"color":"#f59e0b","label":f"Coupon={S_ac*coupon_pct:.0f}","dash":True},
                        {"x":S_ac*autocall_pct,"color":"#22c55e","label":f"Rappel={S_ac*autocall_pct:.0f}","dash":True}],
-               show_dot={"x":S_ac,"y":price_ac,"color":"#52525b","label":f"\u20ac{price_ac:.3f}"},
+               show_dot={"x":S_ac,"y":price_ac,"color":"#7affdc","label":f"€{price_ac:.3f}"},
                title="Prix de la note selon le spot de départ", responsive=True)
             show_svg(svg_ac1, full_width=True, title="Prix de la note selon le spot", chart_id="ac_price")
 
@@ -3139,11 +3143,11 @@ with tab4:
                 for c in corr_grid])
 
             svg_wo1 = svg_chart([
-                {"x":list(corr_grid*100),"y":list(price_vs_corr),"color":"#52525b","width":2.2,"fill":True,"fill_color":"#52525b",
+                {"x":list(corr_grid*100),"y":list(price_vs_corr),"color":"#7affdc","width":2.2,"fill":True,"fill_color":"#7affdc",
                  "label":"Prix de la note"},
-            ], W=680, H=260, xlabel="Corrélation moyenne entre actifs (%)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+            ], W=680, H=260, xlabel="Corrélation moyenne entre actifs (%)", ylabel="Prix (€, pour 100 de nominal)",
                vlines=[{"x":corr_ac*100,"color":"#3b82f6","label":f"\u03c1={corr_ac*100:.0f}%","dash":True}],
-               show_dot={"x":corr_ac*100,"y":price_ac,"color":"#52525b","label":f"\u20ac{price_ac:.3f}"},
+               show_dot={"x":corr_ac*100,"y":price_ac,"color":"#7affdc","label":f"€{price_ac:.3f}"},
                title="Prix de la note selon la corrélation entre actifs", responsive=True)
             show_svg(svg_wo1, full_width=True, title="Prix selon la corrélation", chart_id="ac_price_corr")
 
@@ -3279,11 +3283,12 @@ with tab4:
                     st.markdown(f"""
                     <div class="ph">
                       <div>
-                        <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
-                        <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                        <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
+                        <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
                         <div class="ph-sub">
-                          <span>vs Pair (100) = {diff_par:+.2f}\u20ac</span><span>Coupon total = \u20ac{coupon_total:.2f}</span>
-                          <span>Put vendu = \u20ac{put_rc:.3f}</span>
+                          <span>vs Pair (100) = {diff_par:+.2f}€</span>
+                          <span>Coupon total = €{coupon_total:.2f}</span>
+                          <span>Put vendu = €{put_rc:.3f}</span>
                         </div>
                       </div>
                       <span class="ph-badge ph-p">{badge_rc}</span>
@@ -3294,7 +3299,7 @@ with tab4:
                                 ("\u03bd","Vega",vega_rc,".4f","#3b82f6","Sensibilité à la vol")]
                     cards_html_rc = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_rc)
                     st.markdown(f'<div class="card" style="height:100%">'
-                               f'<div class="ph-ey" style="margin-bottom:14px">Grecques (différences finies)</div>'
+                               f'<div class="ph-ey" style="margin-bottom:14px">Grecques</div>'
                                f'<div class="greeks-grid" style="grid-template-columns:repeat(3,1fr)">{cards_html_rc}</div>'
                                f'<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
                                f'Le Delta est positif : la note gagne de la valeur si le sous-jacent monte - c\'est le '
@@ -3319,18 +3324,18 @@ with tab4:
 
                 svg_rc1 = svg_chart([
                     {"x":list(SRrc),"y":list(payoff_maturity_rc),"color":"#3f3f46","width":1.6,"dash":True,"label":"Remboursement à maturité (référence)"},
-                    {"x":list(SRrc),"y":list(price_curve_rc),"color":"#52525b","width":2.2,"fill":True,"fill_color":"#52525b","label":"Prix actuel"},
-                ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
-                   vlines=vlines_rc, show_dot={"x":Src,"y":price_rc,"color":"#52525b","label":f"\u20ac{price_rc:.3f}"},
+                    {"x":list(SRrc),"y":list(price_curve_rc),"color":"#7affdc","width":2.2,"fill":True,"fill_color":"#7affdc","label":"Prix actuel"},
+                ], W=680, H=260, xlabel="Spot (€)", ylabel="Prix (€, pour 100 de nominal)",
+                   vlines=vlines_rc, show_dot={"x":Src,"y":price_rc,"color":"#7affdc","label":f"€{price_rc:.3f}"},
                    title="Prix de la note selon le spot", responsive=True)
                 svg_rc2 = svg_chart([
                     {"x":list(SRrc),"y":list(delta_curve_rc),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
-                ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_rc, hline_zero=True,
+                ], W=680, H=260, xlabel="Spot (€)", ylabel="Delta", vlines=vlines_rc, hline_zero=True,
                    show_dot={"x":Src,"y":delta_rc,"color":"#22c55e","label":f"{delta_rc:.4f}"},
                    title="\u0394 Delta selon le spot", responsive=True)
                 svg_rc3 = svg_chart([
                     {"x":list(SRrc),"y":list(gamma_curve_rc),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
-                ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_rc, hline_zero=True,
+                ], W=680, H=260, xlabel="Spot (€)", ylabel="Gamma", vlines=vlines_rc, hline_zero=True,
                    show_dot={"x":Src,"y":gamma_rc,"color":"#a78bfa","label":f"{gamma_rc:.5f}"},
                    title="\u0393 Gamma selon le spot", responsive=True)
 
@@ -3365,18 +3370,18 @@ with tab4:
                     st.markdown(f"""
                     <div class="ph">
                       <div>
-                        <div class="ph-ey">Prix de la note (pour 100\u20ac de nominal)</div>
-                        <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                        <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
+                        <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
                         <div class="ph-sub">
-                          <span>IC95% Monte-Carlo = \u00b1{ic95_rc:.3f}\u20ac</span><span>Proba perte capital = {proba_loss_rc*100:.1f}%</span>
+                          <span>IC95% Monte-Carlo = \u00b1{ic95_rc:.3f}€</span><span>Proba perte capital = {proba_loss_rc*100:.1f}%</span>
                           {_touch_span}
                         </div>
                       </div>
                       <span class="ph-badge ph-p">{badge_rc}</span>
                     </div>""", unsafe_allow_html=True)
                 with greeks_col:
-                    gdata_wo_rc = [("\u03c1+", "Corr. +10pts", price_corr_up_rc-price_rc, "+.3f", "#22c55e", "Impact sur le prix (\u20ac)"),
-                                   ("\u03c1-", "Corr. \u221210pts", price_corr_dn_rc-price_rc, "+.3f", "#ef4444", "Impact sur le prix (\u20ac)")]
+                    gdata_wo_rc = [("\u03c1+", "Corr. +10pts", price_corr_up_rc-price_rc, "+.3f", "#22c55e", "Impact sur le prix (€)"),
+                                   ("\u03c1-", "Corr. \u221210pts", price_corr_dn_rc-price_rc, "+.3f", "#ef4444", "Impact sur le prix (€)")]
                     cards_html_wo_rc = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_wo_rc)
                     _pw_html_rc = ''.join(f'<span style="margin-right:14px">Actif {j+1} : <b>{p*100:.1f}%</b></span>'
                                           for j,p in enumerate(proba_worst_asset_rc))
@@ -3405,7 +3410,7 @@ with tab4:
                                'à l\'<b>échéance</b> détermine la perte en capital.</div>', unsafe_allow_html=True)
 
                 section_header("Visualisations")
-                # Grille de corrélation incluant EXACTEMENT le niveau courant corr_rc, calculé avec le même
+                # Grille de corrélation incluant exactement le niveau courant corr_rc, calculé avec le même
                 # nombre de tirages que le prix affiché (n_paths_rc) - garantit que le point (dot) tombe
                 # pile sur la courbe. Les autres points de la grille utilisent un nombre de tirages réduit
                 # (plafonné) pour rester rapides, ce qui laisse un peu de bruit Monte-Carlo résiduel entre
@@ -3421,11 +3426,11 @@ with tab4:
                 corr_grid_rc = np.array(corr_grid_rc)
 
                 svg_wo_rc1 = svg_chart([
-                    {"x":list(corr_grid_rc*100),"y":list(price_vs_corr_rc),"color":"#52525b","width":2.2,"fill":True,"fill_color":"#52525b",
+                    {"x":list(corr_grid_rc*100),"y":list(price_vs_corr_rc),"color":"#7affdc","width":2.2,"fill":True,"fill_color":"#7affdc",
                      "label":"Prix de la note"},
-                ], W=680, H=260, xlabel="Corrélation moyenne entre actifs (%)", ylabel="Prix (\u20ac, pour 100 de nominal)",
+                ], W=680, H=260, xlabel="Corrélation moyenne entre actifs (%)", ylabel="Prix (€, pour 100 de nominal)",
                    vlines=[{"x":corr_rc*100,"color":"#3b82f6","label":f"\u03c1={corr_rc*100:.0f}%","dash":True}],
-                   show_dot={"x":corr_rc*100,"y":price_rc,"color":"#52525b","label":f"\u20ac{price_rc:.3f}"},
+                   show_dot={"x":corr_rc*100,"y":price_rc,"color":"#7affdc","label":f"€{price_rc:.3f}"},
                    title="Prix de la note selon la corrélation entre actifs", responsive=True)
                 show_svg(svg_wo_rc1, full_width=True, title="Prix selon la corrélation", chart_id="rc_price_corr")
 
@@ -3497,11 +3502,12 @@ with tab4:
                 st.markdown(f"""
                 <div class="ph">
                   <div>
-                    <div class="ph-ey">Prix du certificat (pour 100\u20ac de nominal)</div>
-                    <div class="ph-row"><span class="ph-val">{price_bn:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                    <div class="ph-ey">Prix du certificat (pour 100€ de nominal)</div>
+                    <div class="ph-row"><span class="ph-val">{price_bn:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
                     <div class="ph-sub">
-                      <span>Bonus = +{niveau_bonus_pct:.1f}%</span><span>Distance à H = {(Sbn-Hbn)/Sbn*100:.1f}%</span>
-                      <span>vs Tracker pur = {price_bn-100:+.2f}\u20ac</span>
+                      <span>Bonus = +{niveau_bonus_pct:.1f}%</span>
+                      <span>Distance à H = {(Sbn-Hbn)/Sbn*100:.1f}%</span>
+                      <span>vs Tracker pur = {price_bn-100:+.2f}€</span>
                     </div>
                   </div>
                   <span class="ph-badge ph-c">BONUS</span>
@@ -3512,7 +3518,7 @@ with tab4:
                             ("\u03bd","Vega",vega_bn,".4f","#3b82f6","Sensibilité à la vol")]
                 cards_html_bn = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_bn)
                 st.markdown(f'<div class="card" style="height:100%">'
-                           f'<div class="ph-ey" style="margin-bottom:14px">Grecques (différences finies)</div>'
+                           f'<div class="ph-ey" style="margin-bottom:14px">Grecques</div>'
                            f'<div class="greeks-grid" style="grid-template-columns:repeat(3,1fr)">{cards_html_bn}</div>'
                            f'<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
                            f'Le Delta reste proche de +1 (comportement de tracker) tant que le spot est loin des '
@@ -3533,18 +3539,18 @@ with tab4:
 
             svg_bn1 = svg_chart([
                 {"x":list(SRbn),"y":list(payoff_maturity_bn),"color":"#3f3f46","width":1.6,"dash":True,"label":"Payoff à maturité (si barrière jamais touchée)"},
-                {"x":list(SRbn),"y":list(price_curve_bn),"color":"#52525b","width":2.2,"fill":True,"fill_color":"#52525b","label":"Prix actuel"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
-               vlines=vlines_bn, show_dot={"x":Sbn,"y":price_bn,"color":"#52525b","label":f"\u20ac{price_bn:.3f}"},
+                {"x":list(SRbn),"y":list(price_curve_bn),"color":"#7affdc","width":2.2,"fill":True,"fill_color":"#7affdc","label":"Prix actuel"},
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Prix (€, pour 100 de nominal)",
+               vlines=vlines_bn, show_dot={"x":Sbn,"y":price_bn,"color":"#7affdc","label":f"€{price_bn:.3f}"},
                title="Prix du certificat selon le spot", responsive=True)
             svg_bn2 = svg_chart([
                 {"x":list(SRbn),"y":list(delta_curve_bn),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_bn, hline_zero=True,
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Delta", vlines=vlines_bn, hline_zero=True,
                show_dot={"x":Sbn,"y":delta_bn,"color":"#22c55e","label":f"{delta_bn:.4f}"},
                title="\u0394 Delta selon le spot", responsive=True)
             svg_bn3 = svg_chart([
                 {"x":list(SRbn),"y":list(gamma_curve_bn),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_bn, hline_zero=True,
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Gamma", vlines=vlines_bn, hline_zero=True,
                show_dot={"x":Sbn,"y":gamma_bn,"color":"#a78bfa","label":f"{gamma_bn:.5f}"},
                title="\u0393 Gamma selon le spot", responsive=True)
 
@@ -3615,10 +3621,11 @@ with tab4:
                 st.markdown(f"""
                 <div class="ph">
                   <div>
-                    <div class="ph-ey">Prix du certificat (pour 100\u20ac de nominal)</div>
-                    <div class="ph-row"><span class="ph-val">{price_op:.3f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                    <div class="ph-ey">Prix du certificat (pour 100€ de nominal)</div>
+                    <div class="ph-row"><span class="ph-val">{price_op:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
                     <div class="ph-sub">
-                      <span>Participation = {part_op*100:.0f}%</span>{_cap_sub}<span>vs Tracker pur = {price_op-100:+.2f}\u20ac</span>
+                      <span>Participation = {part_op*100:.0f}%</span>{_cap_sub}</span>
+                      <span>vs Tracker pur = {price_op-100:+.2f}€</span>
                     </div>
                   </div>
                   <span class="ph-badge ph-c">{'CAPÉ' if cap_on else 'OUTPERF.'}</span>
@@ -3629,7 +3636,7 @@ with tab4:
                             ("\u03bd","Vega",vega_op,".4f","#3b82f6","Sensibilité à la vol")]
                 cards_html_op = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_op)
                 st.markdown(f'<div class="card" style="height:100%">'
-                           f'<div class="ph-ey" style="margin-bottom:14px">Grecques (différences finies)</div>'
+                           f'<div class="ph-ey" style="margin-bottom:14px">Grecques</div>'
                            f'<div class="greeks-grid" style="grid-template-columns:repeat(3,1fr)">{cards_html_op}</div>'
                            f'<div style="font-size:.68rem;color:var(--t3);margin-top:8px;line-height:1.6">'
                            f'Le Delta dépasse 1 au-dessus de K (participation amplifiée) et redescend vers 1 '
@@ -3652,18 +3659,18 @@ with tab4:
 
             svg_op1 = svg_chart([
                 {"x":list(SRop),"y":list(payoff_maturity_op),"color":"#3f3f46","width":1.6,"dash":True,"label":"Payoff à maturité"},
-                {"x":list(SRop),"y":list(price_curve_op),"color":"#52525b","width":2.2,"fill":True,"fill_color":"#52525b","label":"Prix actuel"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac, pour 100 de nominal)",
-               vlines=vlines_op, show_dot={"x":Sop,"y":price_op,"color":"#52525b","label":f"\u20ac{price_op:.3f}"},
+                {"x":list(SRop),"y":list(price_curve_op),"color":"#7affdc","width":2.2,"fill":True,"fill_color":"#7affdc","label":"Prix actuel"},
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Prix (€, pour 100 de nominal)",
+               vlines=vlines_op, show_dot={"x":Sop,"y":price_op,"color":"#7affdc","label":f"€{price_op:.3f}"},
                title="Prix du certificat selon le spot", responsive=True)
             svg_op2 = svg_chart([
                 {"x":list(SRop),"y":list(delta_curve_op),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_op, hline_zero=True,
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Delta", vlines=vlines_op, hline_zero=True,
                show_dot={"x":Sop,"y":delta_op,"color":"#22c55e","label":f"{delta_op:.4f}"},
                title="\u0394 Delta selon le spot", responsive=True)
             svg_op3 = svg_chart([
                 {"x":list(SRop),"y":list(gamma_curve_op),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
-            ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_op, hline_zero=True,
+            ], W=680, H=260, xlabel="Spot (€)", ylabel="Gamma", vlines=vlines_op, hline_zero=True,
                show_dot={"x":Sop,"y":gamma_op,"color":"#a78bfa","label":f"{gamma_op:.5f}"},
                title="\u0393 Gamma selon le spot", responsive=True)
 
@@ -3711,7 +3718,7 @@ with tab4:
 
         Qdg = 100.0
         if style_dg == "cash":
-            Qdg = st.number_input("Montant fixe Q (\u20ac) si la condition est remplie", value=100.0, step=10.0, key="dg_q_amount")
+            Qdg = st.number_input("Montant fixe Q (€) si la condition est remplie", value=100.0, step=10.0, key="dg_q_amount")
 
         price_dg = digital_price(Sdg, Kdg, Tdg, r_dg, sigdg, q_dg, otype_dg, style_dg, Qdg)
         Gdg = digital_greeks(Sdg, Kdg, Tdg, r_dg, sigdg, q_dg, otype_dg, style_dg, Qdg)
@@ -3724,9 +3731,9 @@ with tab4:
             <div class="ph">
               <div>
                 <div class="ph-ey">Prix de l'option digitale</div>
-                <div class="ph-row"><span class="ph-val">{price_dg:.4f}</span><span class="ph-val" style="margin-left:6px">\u20ac</span></div>
+                <div class="ph-row"><span class="ph-val">{price_dg:.4f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
                 <div class="ph-sub">
-                  <span>Payout si touché = {(f'\u20ac{Qdg:.2f} (fixe)' if style_dg=='cash' else 'S\u1d1b (variable)')}</span>
+                  <span>Payout si touché = {(f'€{Qdg:.2f} (fixe)' if style_dg=='cash' else 'S\u1d1b (variable)')}</span>
                   <span>Proba. risque-neutre \u2248 {(price_dg/Qdg*np.exp(r_dg*Tdg)*100 if style_dg=='cash' else float('nan')):.1f}%</span>
                 </div>
               </div>
@@ -3739,7 +3746,7 @@ with tab4:
                         ("\u0398","Theta",Gdg["theta"],".4f","#f59e0b","Décroissance temporelle (/jour)")]
             cards_html_dg = ''.join(f'<div>{greek_card_html(sym,nm,v,fmt,col_c,desc)}</div>' for sym,nm,v,fmt,col_c,desc in gdata_dg)
             st.markdown(f'<div class="card" style="height:100%">'
-                       f'<div class="ph-ey" style="margin-bottom:14px">Grecques (différences finies)</div>'
+                       f'<div class="ph-ey" style="margin-bottom:14px">Grecques</div>'
                        f'<div class="greeks-grid" style="grid-template-columns:repeat(2,1fr)">{cards_html_dg}</div></div>',
                        unsafe_allow_html=True)
 
@@ -3755,22 +3762,22 @@ with tab4:
 
         vlines_dg = [{"x":Sdg,"color":"#3b82f6","label":f"S={Sdg:.0f}","dash":True},
                     {"x":Kdg,"color":"#52525b","label":f"K={Kdg:.0f}","dash":True}]
-        acc_dg = "#52525b"
+        acc_dg = "#7affdc"
 
         svg_dg1 = svg_chart([
             {"x":list(SRdg),"y":list(payoff_maturity_dg),"color":"#3f3f46","width":1.6,"dash":True,"label":"Payoff à maturité"},
             {"x":list(SRdg),"y":list(price_curve_dg),"color":acc_dg,"width":2.2,"fill":True,"fill_color":acc_dg,"label":"Prix actuel"},
-        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Prix (\u20ac)",
-           vlines=vlines_dg, show_dot={"x":Sdg,"y":price_dg,"color":acc_dg,"label":f"\u20ac{price_dg:.4f}"},
+        ], W=680, H=260, xlabel="Spot (€)", ylabel="Prix (€)",
+           vlines=vlines_dg, show_dot={"x":Sdg,"y":price_dg,"color":acc_dg,"label":f"€{price_dg:.4f}"},
            title="Prix selon le spot", responsive=True)
         svg_dg2 = svg_chart([
             {"x":list(SRdg),"y":list(delta_curve_dg),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
-        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Delta", vlines=vlines_dg, hline_zero=True,
+        ], W=680, H=260, xlabel="Spot (€)", ylabel="Delta", vlines=vlines_dg, hline_zero=True,
            show_dot={"x":Sdg,"y":Gdg["delta"],"color":"#22c55e","label":f"{Gdg['delta']:.4f}"},
            title="\u0394 Delta selon le spot - pic au strike", responsive=True)
         svg_dg3 = svg_chart([
             {"x":list(SRdg),"y":list(gamma_curve_dg),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
-        ], W=680, H=260, xlabel="Spot (\u20ac)", ylabel="Gamma", vlines=vlines_dg, hline_zero=True,
+        ], W=680, H=260, xlabel="Spot (€)", ylabel="Gamma", vlines=vlines_dg, hline_zero=True,
            show_dot={"x":Sdg,"y":Gdg["gamma"],"color":"#a78bfa","label":f"{Gdg['gamma']:.5f}"},
            title="\u0393 Gamma selon le spot", responsive=True)
 
