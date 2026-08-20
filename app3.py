@@ -130,7 +130,7 @@ def barrier_price(S, K, H, T, r, sigma, q=0.0, otype="call", barrier_dir="up", k
 
 def barrier_greeks(S, K, H, T, r, sigma, q=0.0, otype="call", barrier_dir="up", knock="out", rebate=0.0):
     """Grecques par différences finies sur la formule fermée (lisses et sans bruit de simulation).
-    Note pédagogique : Delta/Gamma peuvent devenir très marqués à l'approche de la barrière —
+    Note pédagogique : Delta/Gamma peuvent devenir très marqués à l'approche de la barrière -
     c'est un comportement normal et attendu des options à barrière (difficulté de couverture connue
     des vendeurs de shark notes)"""
     if T <= 1e-9 or sigma <= 1e-9:
@@ -997,7 +997,7 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
     svg2 = svg_chart([
         {"x":list(SR),"y":list(deltas),"color":"#22c55e","width":2.2,"fill":True,"fill_color":"#22c55e","label":"\u0394 Delta"},
     ], W=W, H=H, xlabel="Spot (€)", ylabel="Delta",
-       vlines=[vl(S,"#3b82f6",f"S={S:.0f}"), vl(K,"#52525b")],
+       vlines=[vl(S,"#22c55e",f"S={S:.0f}"), vl(K,"#52525b")],
        hline_zero=True,
        show_dot={"x":S,"y":G["delta"],"color":"#22c55e","label":f"{G['delta']:.4f}"},
        title="\u0394 Delta - Sensibilité au prix du sous-jacent", responsive=_rsp)
@@ -1006,7 +1006,7 @@ def build_dashboard(S, K, T, r, sigma, q, otype, pos_sign=1):
     svg3 = svg_chart([
         {"x":list(SR),"y":list(gammas),"color":"#a78bfa","width":2.2,"fill":True,"fill_color":"#a78bfa","label":"\u0393 Gamma"},
     ], W=W, H=H, xlabel="Spot (€)", ylabel="Gamma",
-       vlines=[vl(S,"#3b82f6",f"S={S:.0f}"), vl(K,"#52525b")],
+       vlines=[vl(S,"#a78bfa",f"S={S:.0f}"), vl(K,"#52525b")],
        hline_zero=True,
        show_dot={"x":S,"y":G["gamma"],"color":"#a78bfa","label":f"{G['gamma']:.5f}"},
        title="\u0393 Gamma - Convexité (accélération du Delta)", responsive=_rsp)
@@ -2922,7 +2922,7 @@ with tab4:
                     '(sensibilités lissées malgré le bruit de simulation).</div>',
                     unsafe_allow_html=True)
 
-        worst_of_ac = st.checkbox("Worst-of (plusieurs sous-jacents)", value=False, key="ac_worst_of",
+        worst_of_ac = st.checkbox("Worst-of", value=False, key="ac_worst_of",
                                   help="Les barrières s'appliquent alors au sous-jacent le MOINS performant du "
                                        "panier à chaque date - structure très répandue en pratique, mais plus "
                                        "risquée (et donc moins chère) qu'un autocall mono-actif, du fait de la "
@@ -3171,7 +3171,7 @@ with tab4:
                     'sinon le capital est intégralement protégé même si le sous-jacent finit sous K à l\'échéance.</div>',
                     unsafe_allow_html=True)
 
-        worst_of_rc = st.checkbox("Worst-of (plusieurs sous-jacents)", value=False, key="rc_worst_of",
+        worst_of_rc = st.checkbox("Worst-of", value=False, key="rc_worst_of",
                                   help="Le strike K et la barrière H s'appliquent alors au sous-jacent le MOINS "
                                        "performant du panier à l'échéance (et en cours de vie pour la barrière "
                                        "d'une BRC) - même logique que le Worst-of Autocall/Phoenix. Une "
@@ -3465,7 +3465,7 @@ with tab4:
             Hbn = st.slider("Barrière H (% S\u2080)", 20, 99, 70, 1, key="bn_h") / 100 * Sbn
         with bn4:
             field_label("Maturité (A / M / J)")
-            Tbn = mat_inline("bn_t", 1, 0, 0)
+            Trc = mat_inline("rc_t", 1, 0, 0)
 
         bn5, bn6, bn7 = st.columns(3)
         with bn5:
