@@ -796,6 +796,21 @@ def mat_inline(pfx, dy=1, dm=0, dd=0):
     T = mat_from_ymd(y,m,d)
     return T
 
+def mat_from_ymd_sp(y, m, d):
+    """Comme mat_from_ymd, mais SANS plancher à 1/365 : permet un T exactement nul (0 année / 0 mois /
+    0 jour). Réservé aux produits structurés - toutes les fonctions de pricing utilisées dans cet onglet
+    (bs_price, barrier_price, european_barrier_price, digital_price, priced_barrier) gèrent déjà
+    explicitement le cas T<=1e-9 en retournant l'intrinsèque/payoff, donc T=0 fait automatiquement
+    basculer les courbes de prix des notes sur leur payoff à maturité pur."""
+    return y + m/12 + d/365
+
+def mat_inline_sp(pfx, dy=1, dm=0, dd=0):
+    c1,c2,c3 = st.columns(3)
+    with c1: y=st.number_input("A",0,30,dy,1,key=f"{pfx}_y",label_visibility="collapsed",help="Annees")
+    with c2: m=st.number_input("M",0,11,dm,1,key=f"{pfx}_m",label_visibility="collapsed",help="Mois")
+    with c3: d=st.number_input("J",0,30,dd,1,key=f"{pfx}_d",label_visibility="collapsed",help="Jours")
+    return mat_from_ymd_sp(y,m,d)
+
 def greek_card(sym,name,val,fmt,color,desc):
     st.markdown(f'<div class="gc" style="--acc:{color}"><div style="display:flex;align-items:flex-start;justify-content:space-between">'
                 f'<span class="gc-sym">{sym}</span><span class="gc-nm">{name}</span></div>'
@@ -1555,19 +1570,18 @@ $$d_1 = \frac{\ln(S/K) + (r - q + \sigma^2/2)\,T}{\sigma\sqrt{T}} \qquad d_2 = d
     section_header("Visualisations")
     svg1 ,svg2 ,svg3 ,svg4 ,svg5 = build_dashboard(S,K,T,r,sigma,q_div,otype,pos_sign)
 
-    # Ligne 1
+    # Prix - centré, quasi pleine largeur
+    chart_p_pad1, chart_p_c, chart_p_pad2 = st.columns([1,10,1])
+    with chart_p_c: show_svg(svg1, full_width=True, title="Prix de l'option selon le spot", chart_id="prix")
+
+    # Grecques - même format/taille, parfaitement alignées : Delta, Gamma, Theta, Vega
     chart_r1c1, chart_r1c2 = st.columns(2)
-    with chart_r1c1: show_svg(svg1, full_width=True, title="Prix de l'option selon le spot", chart_id="prix")
-    with chart_r1c2: show_svg(svg2, full_width=True, title="Δ Delta - Sensibilité au prix du sous-jacent", chart_id="delta")
+    with chart_r1c1: show_svg(svg2, full_width=True, title="Δ Delta - Sensibilité au prix du sous-jacent", chart_id="delta")
+    with chart_r1c2: show_svg(svg3, full_width=True, title="Γ Gamma - Convexité (accélération du Delta)", chart_id="gamma")
 
-    # Ligne 2
     chart_r2c1, chart_r2c2 = st.columns(2)
-    with chart_r2c1: show_svg(svg3, full_width=True, title="Γ Gamma - Convexité (accélération du Delta)", chart_id="gamma")
-    with chart_r2c2: show_svg(svg4, full_width=True, title="ν Vega - Sensibilité à la volatilité implicite", chart_id="vega")
-
-    # Ligne 3 : centre
-    chart_r3_pad1, chart_r3c1, chart_r3_pad2 = st.columns([1,2,1])
-    with chart_r3c1: show_svg(svg5, full_width=True, title="Θ Theta - Érosion temporelle (Time Decay)", chart_id="theta")
+    with chart_r2c1: show_svg(svg4, full_width=True, title="Θ Theta - Érosion temporelle (Time Decay)", chart_id="theta")
+    with chart_r2c2: show_svg(svg5, full_width=True, title="ν Vega - Sensibilité à la volatilité implicite", chart_id="vega")
 
     # ── Analyse de scénarios ──
     section_header("Analyse de scénarios - Stress Test")
@@ -2453,7 +2467,7 @@ with tab4:
         bp5, bp6, bp7 = st.columns(3)
         with bp5:
             field_label("Maturité (A / M / J)")
-            Tb = mat_inline("bo_t", 0, 1, 15)
+            Tb = mat_inline_sp("bo_t", 0, 1, 15)
         with bp6:
             rb = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="bo_r", help="Taux sans risque annuel") / 100
         with bp7:
@@ -2485,7 +2499,7 @@ with tab4:
                   <div>
                     <div class="ph-ey">Prix option à barrière</div>
                     <div class="ph-row"><span class="ph-val">{price:.4f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
-                    <div class="ph-sub">
+                    <div class="ph-sub-v">
                       <span>Vanille équiv. = €{vanilla_ref:.4f}</span>
                       <span>{'Réduction' if reduction>=0 else 'Surcote'} = {reduction:+.1f}%</span>
                       <span>H = {Hb:.1f}</span>
@@ -2634,7 +2648,7 @@ with tab4:
         twp5, twp6, twp7 = st.columns(3)
         with twp5:
             field_label("Maturité (A / M / J)")
-            Ttw = mat_inline("tw_t", 1, 0, 0)
+            Ttw = mat_inline_sp("tw_t", 1, 0, 0)
         with twp6:
             rtw = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="tw_r") / 100
         with twp7:
@@ -2692,7 +2706,7 @@ with tab4:
                   <div>
                     <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
                     <div class="ph-row"><span class="ph-val">{price_tw:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
-                    <div class="ph-sub">
+                    <div class="ph-sub-v">
                       <span>Zéro-coupon = €{100*np.exp(-rtw*Ttw):.3f}</span>
                       <span>Impact rebate = {rebate_impact:+.3f}€</span>
                       <span>Participation = {Ptw*100:.0f}%</span>
@@ -2755,7 +2769,7 @@ with tab4:
             ctw1, ctw2 = st.columns(2)
             with ctw1: show_svg(svg_tw1, full_width=True, title="Prix de la note selon le spot", chart_id="tw_price")
             with ctw2: show_svg(svg_tw2, full_width=True, title="Delta selon le spot", chart_id="tw_delta")
-            ctw3, _ctw_pad = st.columns(2)
+            _ctw_pad1, ctw3, _ctw_pad2 = st.columns([1,2,1])
             with ctw3: show_svg(svg_tw3, full_width=True, title="Gamma selon le spot", chart_id="tw_gamma")
 
             st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
@@ -2795,7 +2809,7 @@ with tab4:
         abp5, abp6, abp7 = st.columns(3)
         with abp5:
             field_label("Maturité (A / M / J)")
-            Tab = mat_inline("ab_t", 1, 0, 0)
+            Tab = mat_inline_sp("ab_t", 1, 0, 0)
         with abp6:
             rab = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="ab_r") / 100
         with abp7:
@@ -2838,7 +2852,7 @@ with tab4:
                   <div>
                     <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
                     <div class="ph-row"><span class="ph-val">{price_ab:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
-                    <div class="ph-sub">
+                    <div class="ph-sub-v">
                       <span>Zéro-coupon = €{100*np.exp(-rab*Tab):.3f}</span>
                       <span>Buffer B = {Bab:.1f}</span>
                       <span>Gearing = {Gear_ab:.2f}\u00d7</span>
@@ -2897,7 +2911,7 @@ with tab4:
             cab1, cab2 = st.columns(2)
             with cab1: show_svg(svg_ab1, full_width=True, title="Prix de la note selon le spot", chart_id="ab_price")
             with cab2: show_svg(svg_ab2b, full_width=True, title="Delta selon le spot", chart_id="ab_delta")
-            cab3, _cab_pad = st.columns(2)
+            _cab_pad1, cab3, _cab_pad2 = st.columns([1,2,1])
             with cab3: show_svg(svg_ab2, full_width=True, title="Gamma selon le spot", chart_id="ab_gamma")
 
             st.markdown('<div style="font-size:.68rem;color:var(--t3);margin-top:6px;line-height:1.6">'
@@ -3037,7 +3051,7 @@ with tab4:
               <div>
                 <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
                 <div class="ph-row"><span class="ph-val">{price_ac:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
-                <div class="ph-sub">
+                <div class="ph-sub-v">
                   <span>IC95% Monte-Carlo = \u00b1{ic95_ac:.3f}€</span>
                   <span>Vie moyenne = {vie_ac:.2f} an(s)</span>
                   <span>Proba perte capital = {proba_loss_ac*100:.1f}%</span>
@@ -3223,7 +3237,7 @@ with tab4:
         rc5, rc6, rc7 = st.columns(3)
         with rc5:
             field_label("Maturité (A / M / J)")
-            Trc = mat_inline("rc_t", 1, 0, 0)
+            Trc = mat_inline_sp("rc_t", 1, 0, 0)
         with rc6:
             if not worst_of_rc:
                 field_label("Volatilité \u03c3 (%)")
@@ -3285,7 +3299,7 @@ with tab4:
                       <div>
                         <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
                         <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
-                        <div class="ph-sub">
+                        <div class="ph-sub-v">
                           <span>vs Pair (100) = {diff_par:+.2f}€</span>
                           <span>Coupon total = €{coupon_total:.2f}</span>
                           <span>Put vendu = €{put_rc:.3f}</span>
@@ -3342,7 +3356,7 @@ with tab4:
                 crc1, crc2 = st.columns(2)
                 with crc1: show_svg(svg_rc1, full_width=True, title="Prix selon le spot", chart_id="rc_price")
                 with crc2: show_svg(svg_rc2, full_width=True, title="Delta selon le spot", chart_id="rc_delta")
-                crc3, _crc_pad = st.columns(2)
+                _crc_pad1, crc3, _crc_pad2 = st.columns([1,2,1])
                 with crc3: show_svg(svg_rc3, full_width=True, title="Gamma selon le spot", chart_id="rc_gamma")
 
             else:
@@ -3372,7 +3386,7 @@ with tab4:
                       <div>
                         <div class="ph-ey">Prix de la note (pour 100€ de nominal)</div>
                         <div class="ph-row"><span class="ph-val">{price_rc:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
-                        <div class="ph-sub">
+                        <div class="ph-sub-v">
                           <span>IC95% Monte-Carlo = \u00b1{ic95_rc:.3f}€</span><span>Proba perte capital = {proba_loss_rc*100:.1f}%</span>
                           {_touch_span}
                         </div>
@@ -3456,25 +3470,24 @@ with tab4:
                     'annulé (knock-out) et il ne reste que le tracker.</div>', unsafe_allow_html=True)
 
         section_header("Paramètres")
-        bn1, bn2, bn3, bn4 = st.columns(4)
+        bn1, bn2, bn3 = st.columns(3)
         with bn1:
             Sbn = st.number_input("Spot S\u2080", value=100.0, step=1.0, key="bn_s")
         with bn2:
             Bbn = st.slider("Niveau Bonus B (% S\u2080)", 100, 200, 115, 1, key="bn_b") / 100 * Sbn
         with bn3:
             Hbn = st.slider("Barrière H (% S\u2080)", 20, 99, 70, 1, key="bn_h") / 100 * Sbn
-        with bn4:
-            field_label("Maturité (A / M / J)") 
-            Tbn = mat_inline("bn_t", 1, 0, 0)
 
-        bn5, bn6, bn7 = st.columns(3)
+        bn4, bn5, bn6 = st.columns(3)
+        with bn4:
+            field_label("Maturité (A / M / J)")
+            Tbn = mat_inline_sp("bn_t", 1, 0, 0)
         with bn5:
             r_bn = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="bn_r") / 100
         with bn6:
             q_bn = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="bn_q") / 100
-        with bn7:
-            field_label("Volatilité \u03c3 (%)")
-            sigbn = st.slider("sigbn", 1.0, 150.0, 25.0, 0.5, key="bn_sigma", label_visibility="collapsed") / 100
+        field_label("Volatilité \u03c3 (%)")
+        sigbn = st.slider("sigbn", 1.0, 150.0, 25.0, 0.5, key="bn_sigma", label_visibility="collapsed") / 100
 
         monitor_bn, n_obs_bn = barrier_monitor_selector("bn", Tbn)
 
@@ -3504,7 +3517,7 @@ with tab4:
                   <div>
                     <div class="ph-ey">Prix du certificat (pour 100€ de nominal)</div>
                     <div class="ph-row"><span class="ph-val">{price_bn:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
-                    <div class="ph-sub">
+                    <div class="ph-sub-v">
                       <span>Bonus = +{niveau_bonus_pct:.1f}%</span>
                       <span>Distance à H = {(Sbn-Hbn)/Sbn*100:.1f}%</span>
                       <span>vs Tracker pur = {price_bn-100:+.2f}€</span>
@@ -3557,7 +3570,7 @@ with tab4:
             cbn1, cbn2 = st.columns(2)
             with cbn1: show_svg(svg_bn1, full_width=True, title="Prix selon le spot", chart_id="bn_price")
             with cbn2: show_svg(svg_bn2, full_width=True, title="Delta selon le spot", chart_id="bn_delta")
-            cbn3, _cbn_pad = st.columns(2)
+            _cbn_pad1, cbn3, _cbn_pad2 = st.columns([1,2,1])
             with cbn3: show_svg(svg_bn3, full_width=True, title="Gamma selon le spot", chart_id="bn_gamma")
 
     # ═══════════════════ OUTPERFORMANCE / LEVIER ═══════════════════
@@ -3570,7 +3583,7 @@ with tab4:
                     'supérieur K<sub>2</sub> (certificat \u00ab Outperformance Capée \u00bb).</div>', unsafe_allow_html=True)
 
         section_header("Paramètres")
-        op1, op2, op3, op4 = st.columns(4)
+        op1, op2, op3 = st.columns(3)
         with op1:
             Sop = st.number_input("Spot S\u2080", value=100.0, step=1.0, key="op_s")
         with op2:
@@ -3579,18 +3592,17 @@ with tab4:
         with op3:
             part_op = st.slider("Participation (%)", 100, 300, 150, 5, key="op_part",
                                 help="Taux de participation à la hausse au-delà de K (150% = 1.5x)") / 100
+
+        op4, op5, op6 = st.columns(3)
         with op4:
             field_label("Maturité (A / M / J)")
-            Top = mat_inline("op_t", 1, 0, 0)
-
-        op5, op6, op7 = st.columns(3)
+            Top = mat_inline_sp("op_t", 1, 0, 0)
         with op5:
             r_op = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="op_r") / 100
         with op6:
             q_op = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="op_q") / 100
-        with op7:
-            field_label("Volatilité \u03c3 (%)")
-            sigop = st.slider("sigop", 1.0, 150.0, 25.0, 0.5, key="op_sigma", label_visibility="collapsed") / 100
+        field_label("Volatilité \u03c3 (%)")
+        sigop = st.slider("sigop", 1.0, 150.0, 25.0, 0.5, key="op_sigma", label_visibility="collapsed") / 100
 
         cap_on = st.checkbox("Ajouter un cap (Outperformance Capée)", value=False, key="op_cap_on")
         Kop2 = Kop * 1.3
@@ -3623,7 +3635,7 @@ with tab4:
                   <div>
                     <div class="ph-ey">Prix du certificat (pour 100€ de nominal)</div>
                     <div class="ph-row"><span class="ph-val">{price_op:.3f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
-                    <div class="ph-sub">
+                    <div class="ph-sub-v">
                       <span>Participation = {part_op*100:.0f}%</span>{_cap_sub}</span>
                       <span>vs Tracker pur = {price_op-100:+.2f}€</span>
                     </div>
@@ -3677,7 +3689,7 @@ with tab4:
             cop1, cop2 = st.columns(2)
             with cop1: show_svg(svg_op1, full_width=True, title="Prix selon le spot", chart_id="op_price")
             with cop2: show_svg(svg_op2, full_width=True, title="Delta selon le spot", chart_id="op_delta")
-            cop3, _cop_pad = st.columns(2)
+            _cop_pad1, cop3, _cop_pad2 = st.columns([1,2,1])
             with cop3: show_svg(svg_op3, full_width=True, title="Gamma selon le spot", chart_id="op_gamma")
 
     # ═══════════════════ OPTIONS DIGITALES ═══════════════════
@@ -3704,17 +3716,16 @@ with tab4:
             style_dg = st.selectbox("Style", ["cash", "asset"], key="dg_style",
                                     format_func=lambda x: "Cash-or-Nothing" if x=="cash" else "Asset-or-Nothing")
 
-        dg5, dg6, dg7, dg8 = st.columns(4)
+        dg5, dg6, dg7 = st.columns(3)
         with dg5:
             field_label("Maturité (A / M / J)")
-            Tdg = mat_inline("dg_t", 1, 0, 0)
+            Tdg = mat_inline_sp("dg_t", 1, 0, 0)
         with dg6:
             r_dg = st.slider("Taux r (%)", 0.0, 10.0, 2.5, 0.1, key="dg_r") / 100
         with dg7:
             q_dg = st.slider("Dividende q (%)", 0.0, 20.0, 0.0, 0.1, key="dg_q") / 100
-        with dg8:
-            field_label("Volatilité \u03c3 (%)")
-            sigdg = st.slider("sigdg", 1.0, 150.0, 25.0, 0.5, key="dg_sigma", label_visibility="collapsed") / 100
+        field_label("Volatilité \u03c3 (%)")
+        sigdg = st.slider("sigdg", 1.0, 150.0, 25.0, 0.5, key="dg_sigma", label_visibility="collapsed") / 100
 
         Qdg = 100.0
         if style_dg == "cash":
@@ -3732,7 +3743,7 @@ with tab4:
               <div>
                 <div class="ph-ey">Prix de l'option digitale</div>
                 <div class="ph-row"><span class="ph-val">{price_dg:.4f}</span><span class="ph-val" style="margin-left:6px">€</span></div>
-                <div class="ph-sub">
+                <div class="ph-sub-v">
                   <span>Payout si touché = {(f'€{Qdg:.2f} (fixe)' if style_dg=='cash' else 'S\u1d1b (variable)')}</span>
                   <span>Proba. risque-neutre \u2248 {(price_dg/Qdg*np.exp(r_dg*Tdg)*100 if style_dg=='cash' else float('nan')):.1f}%</span>
                 </div>
@@ -3784,7 +3795,7 @@ with tab4:
         cdg1, cdg2 = st.columns(2)
         with cdg1: show_svg(svg_dg1, full_width=True, title="Prix selon le spot", chart_id="dg_price")
         with cdg2: show_svg(svg_dg2, full_width=True, title="Delta selon le spot", chart_id="dg_delta")
-        cdg3, _cdg_pad = st.columns(2)
+        _cdg_pad1, cdg3, _cdg_pad2 = st.columns([1,2,1])
         with cdg3: show_svg(svg_dg3, full_width=True, title="Gamma selon le spot", chart_id="dg_gamma")
 
 st.markdown("""
@@ -3862,6 +3873,8 @@ header[data-testid="stHeader"]{background:var(--bg)!important;}
   background:linear-gradient(180deg,#f8fafc,#a1a1aa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
 .ph-sub{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--t2);margin-top:10px;
   display:flex;gap:10px;flex-wrap:wrap;padding-top:8px;border-top:1px solid rgba(255,255,255,.04);}
+.ph-sub-v{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--t2);margin-top:10px;
+  display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid rgba(255,255,255,.04);}
 .ph-badge{font-size:.72rem;font-weight:600;padding:4px 14px;border-radius:20px;align-self:flex-start;letter-spacing:.5px;}
 .ph-c{background:rgba(6,182,212,.08);color:var(--call);border:1px solid rgba(6,182,212,.15);}
 .ph-p{background:rgba(244,114,182,.08);color:var(--put);border:1px solid rgba(244,114,182,.15);}
